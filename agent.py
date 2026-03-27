@@ -53,7 +53,7 @@ async def schedule_daily_message(bot, channel_id, message, hour, minute):
             if channel:
                 await channel.send(message)
         except Exception as e:
-            print(f"❌ 定时消息失败: {e}")
+            print(f"定时消息失败: {e}")
 
 async def schedule_one_time_task(bot, channel_id, message, seconds):
     await asyncio.sleep(seconds)
@@ -62,34 +62,32 @@ async def schedule_one_time_task(bot, channel_id, message, seconds):
         if channel:
             await channel.send(f"⏰ 提醒：{message}")
     except Exception as e:
-        print(f"❌ 提醒失败: {e}")
+        print(f"提醒失败: {e}")
 
 # ========== 工具函数 ==========
-def apply_code_patch(patch_text: str, commit_message: str = "Self-modify") -> str:
+def get_time():
+    return datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
+
+def apply_code_patch(patch_text, commit_message="Self-modify"):
     try:
         gm = GitManager(repo_path=os.getcwd())
-        success = gm.apply_patch(patch_text, commit_message)
-        if success:
+        if gm.apply_patch(patch_text, commit_message):
             return "✅ 代码已修改并推送，Railway 将自动重新部署。"
-        return "❌ 修改失败，请检查补丁格式。"
+        return "❌ 修改失败"
     except Exception as e:
-        return f"❌ 错误：{str(e)}"
+        return f"❌ 错误：{e}"
 
-def get_time() -> str:
-    now = datetime.now()
-    return f"🕐 当前时间：{now.strftime('%Y年%m月%d日 %H:%M:%S')}"
-
-def read_file(filepath: str) -> str:
+def read_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
             if len(content) > 1900:
                 content = content[:1900] + "\n... (截断)"
-            return f"📄 文件 {filepath}：\n```python\n{content}\n```"
+            return f"📄 {filepath}：\n```python\n{content}\n```"
     except Exception as e:
         return f"❌ 读取失败: {e}"
 
-def search_web(query: str) -> str:
+def search_web(query):
     try:
         url = f"https://html.duckduckgo.com/html/?q={query}"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -106,12 +104,12 @@ def search_web(query: str) -> str:
     except Exception as e:
         return f"❌ 搜索失败: {e}"
 
-def set_daily_message(channel_id: str, message: str, hour: int, minute: int) -> str:
+def set_daily_message(channel_id, message, hour, minute):
     task_id = f"daily_{channel_id}_{hour}_{minute}"
     scheduled_tasks[task_id] = {"channel_id": channel_id, "message": message, "hour": hour, "minute": minute}
     return f"✅ 已设置每日 {hour:02d}:{minute:02d} 在此频道发送消息"
 
-def set_one_time_reminder(channel_id: str, message: str, seconds: int) -> str:
+def set_one_time_reminder(channel_id, message, seconds):
     task_id = f"once_{channel_id}_{int(datetime.now().timestamp())}"
     one_time_tasks[task_id] = {"channel_id": channel_id, "message": message, "seconds": seconds}
     if seconds < 60:
@@ -121,7 +119,7 @@ def set_one_time_reminder(channel_id: str, message: str, seconds: int) -> str:
     else:
         return f"✅ 已设置 {seconds//3600} 小时后提醒：{message}"
 
-def delete_task(task_description: str) -> str:
+def delete_task(task_description):
     if "每天" in task_description or "每日" in task_description:
         for task_id in list(scheduled_tasks.keys()):
             task = scheduled_tasks[task_id]
@@ -134,7 +132,7 @@ def delete_task(task_description: str) -> str:
         one_time_tasks.clear()
         return f"✅ 已删除 {count} 个一次性提醒"
 
-def list_tasks() -> str:
+def list_tasks():
     result = []
     if scheduled_tasks:
         result.append("📋 每日任务：")
@@ -154,8 +152,8 @@ def list_tasks() -> str:
 
 # ========== 工具定义 ==========
 TOOLS = [
-    {"type": "function", "function": {"name": "apply_code_patch", "description": "修改代码", "parameters": {"type": "object", "properties": {"patch_text": {"type": "string"}}, "required": ["patch_text"]}}},
     {"type": "function", "function": {"name": "get_time", "description": "获取时间", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "apply_code_patch", "description": "修改代码", "parameters": {"type": "object", "properties": {"patch_text": {"type": "string"}}, "required": ["patch_text"]}}},
     {"type": "function", "function": {"name": "read_file", "description": "读取文件", "parameters": {"type": "object", "properties": {"filepath": {"type": "string"}}, "required": ["filepath"]}}},
     {"type": "function", "function": {"name": "search_web", "description": "搜索", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "set_daily_message", "description": "每日定时", "parameters": {"type": "object", "properties": {"message": {"type": "string"}, "hour": {"type": "integer"}, "minute": {"type": "integer"}}, "required": ["message", "hour", "minute"]}}},
@@ -164,7 +162,7 @@ TOOLS = [
     {"type": "function", "function": {"name": "list_tasks", "description": "列出任务", "parameters": {"type": "object", "properties": {}}}}
 ]
 
-SYSTEM_INSTRUCTION = """你是 Discord 机器人，中文能力极强。
+SYSTEM_INSTRUCTION = """你是 Discord 机器人。
 规则：
 - 用户说"现在几点"时调用 get_time
 - 说"读取 bot.py"时调用 read_file
@@ -174,7 +172,7 @@ SYSTEM_INSTRUCTION = """你是 Discord 机器人，中文能力极强。
 - 说"X分钟后提醒我"时调用 set_one_time_reminder
 - 说"删除提醒"时调用 delete_task
 - 说"查看任务"时调用 list_tasks
-- 修改代码前必须先展示补丁，等用户确认
+- 修改代码前必须展示补丁，等用户确认
 - 用中文回复"""
 
 class Agent:
@@ -187,7 +185,7 @@ class Agent:
     def set_bot(self, bot):
         self.bot = bot
 
-    async def run(self, user_input: str, user_id: str, channel=None) -> str:
+    async def run(self, user_input, user_id, channel=None):
         if user_id not in os.getenv("AUTHORIZED_USERS", "").split(","):
             return "❌ 无权限"
 
@@ -206,17 +204,106 @@ class Agent:
             return "✅ 已重置"
 
         try:
+            # 尝试主用模型
             if primary_client == "zhipu":
-                return await self._use_zhipu(user_input, channel)
+                return await self._stream_zhipu(user_input, channel)
             else:
-                return await self._use_groq(user_input, channel)
+                return await self._stream_groq(user_input, channel)
         except Exception as e:
+            # 主用失败，切备用
             if primary_client == "zhipu" and GROQ_API_KEY:
                 print(f"智谱失败: {e}，切换到 Groq")
-                return await self._use_groq(user_input, channel)
+                return await self._stream_groq(user_input, channel)
+            elif primary_client == "groq" and ZHIPU_API_KEY:
+                print(f"Groq失败: {e}，切换到智谱")
+                return await self._stream_zhipu(user_input, channel)
             return f"❌ 错误：{e}"
 
-    async def _use_zhipu(self, user_input: str, channel=None) -> str:
+    async def _stream_zhipu(self, user_input, channel):
+        """流式调用智谱"""
+        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+        for msg in self.history:
+            messages.append({"role": msg["role"], "content": msg["parts"][0]})
+        messages.append({"role": "user", "content": user_input})
+
+        # 流式请求
+        stream = zhipu_client.chat.completions.create(
+            model=ZHIPU_MODEL,
+            messages=messages,
+            temperature=0.5,      # 降低，提高速度
+            max_tokens=2048,      # 减少输出长度
+            tools=TOOLS,
+            tool_choice="auto",
+            stream=True
+        )
+
+        full_content = ""
+        tool_calls = []
+
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta:
+                delta = chunk.choices[0].delta
+                
+                # 收集文本内容
+                if delta.content:
+                    full_content += delta.content
+                    # 实时发送（流式显示）
+                    if channel:
+                        await channel.send(delta.content)
+                
+                # 收集工具调用
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        # 简化处理，这里不实时发
+                        pass
+
+        # 如果有工具调用，需要二次处理
+        if full_content and "调用" in full_content:
+            # 简单检测工具调用（实际应该解析 tool_calls）
+            pass
+        
+        # 如果没有流式内容，或者需要执行工具，走非流式
+        if not full_content:
+            return await self._use_zhipu_nonstream(user_input, channel)
+        
+        self._update_history(user_input, full_content)
+        return None  # 流式已发送
+
+    async def _stream_groq(self, user_input, channel):
+        """流式调用 Groq"""
+        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+        for msg in self.history:
+            messages.append({"role": msg["role"], "content": msg["parts"][0]})
+        messages.append({"role": "user", "content": user_input})
+
+        # 流式请求
+        stream = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=2048,
+            tools=TOOLS,
+            tool_choice="auto",
+            stream=True
+        )
+
+        full_content = ""
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    full_content += delta.content
+                    if channel:
+                        await channel.send(delta.content)
+
+        if not full_content:
+            return await self._use_groq_nonstream(user_input, channel)
+        
+        self._update_history(user_input, full_content)
+        return None
+
+    async def _use_zhipu_nonstream(self, user_input, channel):
+        """非流式调用（处理工具调用）"""
         messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
         for msg in self.history:
             messages.append({"role": msg["role"], "content": msg["parts"][0]})
@@ -225,15 +312,15 @@ class Agent:
         resp = zhipu_client.chat.completions.create(
             model=ZHIPU_MODEL,
             messages=messages,
-            temperature=0.7,
-            max_tokens=8192,
+            temperature=0.5,
+            max_tokens=2048,
             tools=TOOLS,
             tool_choice="auto"
         )
-
         return await self._handle_response(resp, user_input, channel)
 
-    async def _use_groq(self, user_input: str, channel=None) -> str:
+    async def _use_groq_nonstream(self, user_input, channel):
+        """非流式调用（处理工具调用）"""
         messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
         for msg in self.history:
             messages.append({"role": msg["role"], "content": msg["parts"][0]})
@@ -242,15 +329,15 @@ class Agent:
         resp = groq_client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
-            temperature=0.7,
-            max_tokens=8192,
+            temperature=0.5,
+            max_tokens=2048,
             tools=TOOLS,
             tool_choice="auto"
         )
-
         return await self._handle_response(resp, user_input, channel)
 
     async def _handle_response(self, resp, user_input, channel):
+        """处理响应（工具调用）"""
         reply = resp.choices[0].message
 
         if reply.tool_calls:
