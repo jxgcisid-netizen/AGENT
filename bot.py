@@ -11,7 +11,7 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all(), help_comma
 agent = Agent()
 
 # 保留这一行！现在 Agent 有 set_bot 方法了
-agent.set_bot(bot)
+#agent.set_bot(bot)
 
 @bot.event
 async def on_ready():
