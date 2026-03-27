@@ -1,7 +1,7 @@
 discord.py
 python-dotenv
 openai
+groq
 gitpython
 requests
 beautifulsoup4
-groq
