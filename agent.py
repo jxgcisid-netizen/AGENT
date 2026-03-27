@@ -165,6 +165,7 @@ class Agent:
         if user_id not in os.getenv("AUTHORIZED_USERS", "").split(","):
             return "❌ 无权限"
 
+        # 确认处理
         if self.waiting_for_confirmation:
             if user_input.lower() in ["yes", "是", "确认", "y"]:
                 self.waiting_for_confirmation = False
@@ -175,62 +176,40 @@ class Agent:
             else:
                 return "回复 yes 确认，no 取消"
 
+        # 重置命令
         if user_input in ["!reset", "重置"]:
             self.history = []
             return "✅ 已重置"
 
         try:
-            return await self._call_groq_edit(user_input, channel)
+            # 构建消息
+            messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+            for msg in self.history:
+                messages.append({"role": msg["role"], "content": msg["parts"][0]})
+            messages.append({"role": "user", "content": user_input})
+
+            # 调用 Groq
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                temperature=0.5,
+                max_tokens=2048,
+                tools=TOOLS,
+                tool_choice="auto"
+            )
+
+            reply = response.choices[0].message
+
+            # 处理工具调用
+            if reply.tool_calls:
+                return await self._handle_tools(reply, user_input, channel)
+
+            # 直接返回文本
+            self._update_history(user_input, reply.content)
+            return reply.content
+
         except Exception as e:
             return f"❌ 错误：{e}"
-
-    async def _call_groq_edit(self, user_input, channel):
-        """Groq 调用 - 消息编辑流式"""
-        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-        for msg in self.history:
-            messages.append({"role": msg["role"], "content": msg["parts"][0]})
-        messages.append({"role": "user", "content": user_input})
-
-        # 先检测是否需要工具调用
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=2048,
-            tools=TOOLS,
-            tool_choice="auto"
-        )
-
-        reply = response.choices[0].message
-
-        # 工具调用，直接返回
-        if reply.tool_calls:
-            return await self._handle_tools(reply, user_input, channel)
-
-        # 无工具调用，流式输出
-        stream = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=2048,
-            stream=True
-        )
-
-        # 发送初始消息
-        msg = await channel.send("_思考中..._")
-        full_content = ""
-        
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_content += content
-                if len(full_content) <= 2000:
-                    await msg.edit(content=full_content)
-                else:
-                    await msg.edit(content=full_content[:1997] + "...")
-
-        self._update_history(user_input, full_content)
-        return None
 
     async def _handle_tools(self, reply, user_input, channel):
         """处理工具调用"""
@@ -262,7 +241,9 @@ class Agent:
                 if not self.bot or not channel:
                     result = "❌ 需要频道"
                 else:
-                    asyncio.create_task(schedule_daily_message(self.bot, str(channel.id), args["message"], args["hour"], args["minute"]))
+                    asyncio.create_task(schedule_daily_message(
+                        self.bot, str(channel.id), args["message"], args["hour"], args["minute"]
+                    ))
                     result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
                 self._update_history(user_input, result)
                 return result
@@ -271,7 +252,9 @@ class Agent:
                 if not self.bot or not channel:
                     result = "❌ 需要频道"
                 else:
-                    asyncio.create_task(schedule_one_time_task(self.bot, str(channel.id), args["message"], args["seconds"]))
+                    asyncio.create_task(schedule_one_time_task(
+                        self.bot, str(channel.id), args["message"], args["seconds"]
+                    ))
                     result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
                 self._update_history(user_input, result)
                 return result
