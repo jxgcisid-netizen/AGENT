@@ -4,3 +4,4 @@ openai
 gitpython
 requests
 beautifulsoup4
+groq
