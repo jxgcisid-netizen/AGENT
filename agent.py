@@ -9,7 +9,6 @@ from git_manager import GitManager
 from bs4 import BeautifulSoup
 
 # ========== 配置 ==========
-# 智谱 AI（主用，智商最高）
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
 if ZHIPU_API_KEY:
     zhipu_client = OpenAI(
@@ -19,14 +18,12 @@ if ZHIPU_API_KEY:
     ZHIPU_MODEL = "glm-4.7-flash"
     print("✅ 智谱 GLM-4.7-Flash 已配置")
 
-# Groq（备用）
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
     GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     print("✅ Groq 已配置")
 
-# 确定主用模型
 primary_client = None
 if ZHIPU_API_KEY:
     primary_client = "zhipu"
@@ -37,7 +34,7 @@ elif GROQ_API_KEY:
 else:
     raise Exception("❌ 没有可用的 API Key")
 
-# ========== 定时任务管理 ==========
+# ========== 定时任务 ==========
 scheduled_tasks = {}
 one_time_tasks = {}
 
@@ -204,197 +201,159 @@ class Agent:
             return "✅ 已重置"
 
         try:
-            # 尝试主用模型
             if primary_client == "zhipu":
-                return await self._stream_zhipu(user_input, channel)
+                return await self._call_zhipu(user_input, channel)
             else:
-                return await self._stream_groq(user_input, channel)
+                return await self._call_groq(user_input, channel)
         except Exception as e:
-            # 主用失败，切备用
             if primary_client == "zhipu" and GROQ_API_KEY:
                 print(f"智谱失败: {e}，切换到 Groq")
-                return await self._stream_groq(user_input, channel)
+                return await self._call_groq(user_input, channel)
             elif primary_client == "groq" and ZHIPU_API_KEY:
                 print(f"Groq失败: {e}，切换到智谱")
-                return await self._stream_zhipu(user_input, channel)
+                return await self._call_zhipu(user_input, channel)
             return f"❌ 错误：{e}"
 
-    async def _stream_zhipu(self, user_input, channel):
-        """流式调用智谱"""
+    async def _call_zhipu(self, user_input, channel):
+        """智谱调用（流式）"""
         messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
         for msg in self.history:
             messages.append({"role": msg["role"], "content": msg["parts"][0]})
         messages.append({"role": "user", "content": user_input})
 
-        # 流式请求
+        # 非流式，先检测是否需要工具调用
+        response = zhipu_client.chat.completions.create(
+            model=ZHIPU_MODEL,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=2048,
+            tools=TOOLS,
+            tool_choice="auto"
+        )
+
+        reply = response.choices[0].message
+
+        # 如果有工具调用，走非流式处理
+        if reply.tool_calls:
+            return await self._handle_tools(reply, user_input, channel)
+
+        # 无工具调用，走流式输出
         stream = zhipu_client.chat.completions.create(
             model=ZHIPU_MODEL,
             messages=messages,
-            temperature=0.5,      # 降低，提高速度
-            max_tokens=2048,      # 减少输出长度
-            tools=TOOLS,
-            tool_choice="auto",
+            temperature=0.5,
+            max_tokens=2048,
             stream=True
         )
 
         full_content = ""
-        tool_calls = []
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                if channel:
+                    await channel.send(content)
 
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta:
-                delta = chunk.choices[0].delta
-                
-                # 收集文本内容
-                if delta.content:
-                    full_content += delta.content
-                    # 实时发送（流式显示）
-                    if channel:
-                        await channel.send(delta.content)
-                
-                # 收集工具调用
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        # 简化处理，这里不实时发
-                        pass
-
-        # 如果有工具调用，需要二次处理
-        if full_content and "调用" in full_content:
-            # 简单检测工具调用（实际应该解析 tool_calls）
-            pass
-        
-        # 如果没有流式内容，或者需要执行工具，走非流式
-        if not full_content:
-            return await self._use_zhipu_nonstream(user_input, channel)
-        
         self._update_history(user_input, full_content)
         return None  # 流式已发送
 
-    async def _stream_groq(self, user_input, channel):
-        """流式调用 Groq"""
+    async def _call_groq(self, user_input, channel):
+        """Groq调用（流式）"""
         messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
         for msg in self.history:
             messages.append({"role": msg["role"], "content": msg["parts"][0]})
         messages.append({"role": "user", "content": user_input})
 
-        # 流式请求
+        # 非流式，先检测是否需要工具调用
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=2048,
+            tools=TOOLS,
+            tool_choice="auto"
+        )
+
+        reply = response.choices[0].message
+
+        if reply.tool_calls:
+            return await self._handle_tools(reply, user_input, channel)
+
+        # 流式输出
         stream = groq_client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
             temperature=0.5,
             max_tokens=2048,
-            tools=TOOLS,
-            tool_choice="auto",
             stream=True
         )
 
         full_content = ""
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    full_content += delta.content
-                    if channel:
-                        await channel.send(delta.content)
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                if channel:
+                    await channel.send(content)
 
-        if not full_content:
-            return await self._use_groq_nonstream(user_input, channel)
-        
         self._update_history(user_input, full_content)
         return None
 
-    async def _use_zhipu_nonstream(self, user_input, channel):
-        """非流式调用（处理工具调用）"""
-        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-        for msg in self.history:
-            messages.append({"role": msg["role"], "content": msg["parts"][0]})
-        messages.append({"role": "user", "content": user_input})
+    async def _handle_tools(self, reply, user_input, channel):
+        """处理工具调用"""
+        for tc in reply.tool_calls:
+            func = tc.function.name
+            args = json.loads(tc.function.arguments)
 
-        resp = zhipu_client.chat.completions.create(
-            model=ZHIPU_MODEL,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=2048,
-            tools=TOOLS,
-            tool_choice="auto"
-        )
-        return await self._handle_response(resp, user_input, channel)
+            if func == "apply_code_patch":
+                self.pending_patch = args.get("patch_text")
+                self.waiting_for_confirmation = True
+                return f"📝 补丁预览：\n```diff\n{args.get('patch_text')}\n```\n是否应用？回复 yes"
 
-    async def _use_groq_nonstream(self, user_input, channel):
-        """非流式调用（处理工具调用）"""
-        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-        for msg in self.history:
-            messages.append({"role": msg["role"], "content": msg["parts"][0]})
-        messages.append({"role": "user", "content": user_input})
+            elif func == "get_time":
+                result = get_time()
+                self._update_history(user_input, result)
+                return result
 
-        resp = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=2048,
-            tools=TOOLS,
-            tool_choice="auto"
-        )
-        return await self._handle_response(resp, user_input, channel)
+            elif func == "read_file":
+                result = read_file(args.get("filepath"))
+                self._update_history(user_input, result)
+                return result
 
-    async def _handle_response(self, resp, user_input, channel):
-        """处理响应（工具调用）"""
-        reply = resp.choices[0].message
+            elif func == "search_web":
+                result = search_web(args.get("query"))
+                self._update_history(user_input, result)
+                return result
 
-        if reply.tool_calls:
-            for tc in reply.tool_calls:
-                func = tc.function.name
-                args = json.loads(tc.function.arguments)
+            elif func == "set_daily_message":
+                if not self.bot or not channel:
+                    result = "❌ 需要频道"
+                else:
+                    asyncio.create_task(schedule_daily_message(self.bot, str(channel.id), args["message"], args["hour"], args["minute"]))
+                    result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
+                self._update_history(user_input, result)
+                return result
 
-                if func == "apply_code_patch":
-                    self.pending_patch = args.get("patch_text")
-                    self.waiting_for_confirmation = True
-                    return f"📝 补丁预览：\n```diff\n{args.get('patch_text')}\n```\n是否应用？回复 yes"
+            elif func == "set_one_time_reminder":
+                if not self.bot or not channel:
+                    result = "❌ 需要频道"
+                else:
+                    asyncio.create_task(schedule_one_time_task(self.bot, str(channel.id), args["message"], args["seconds"]))
+                    result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
+                self._update_history(user_input, result)
+                return result
 
-                elif func == "get_time":
-                    result = get_time()
-                    self._update_history(user_input, result)
-                    return result
+            elif func == "delete_task":
+                result = delete_task(args.get("task_description"))
+                self._update_history(user_input, result)
+                return result
 
-                elif func == "read_file":
-                    result = read_file(args.get("filepath"))
-                    self._update_history(user_input, result)
-                    return result
+            elif func == "list_tasks":
+                result = list_tasks()
+                self._update_history(user_input, result)
+                return result
 
-                elif func == "search_web":
-                    result = search_web(args.get("query"))
-                    self._update_history(user_input, result)
-                    return result
-
-                elif func == "set_daily_message":
-                    if not self.bot or not channel:
-                        result = "❌ 需要频道"
-                    else:
-                        asyncio.create_task(schedule_daily_message(self.bot, str(channel.id), args["message"], args["hour"], args["minute"]))
-                        result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
-                    self._update_history(user_input, result)
-                    return result
-
-                elif func == "set_one_time_reminder":
-                    if not self.bot or not channel:
-                        result = "❌ 需要频道"
-                    else:
-                        asyncio.create_task(schedule_one_time_task(self.bot, str(channel.id), args["message"], args["seconds"]))
-                        result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
-                    self._update_history(user_input, result)
-                    return result
-
-                elif func == "delete_task":
-                    result = delete_task(args.get("task_description"))
-                    self._update_history(user_input, result)
-                    return result
-
-                elif func == "list_tasks":
-                    result = list_tasks()
-                    self._update_history(user_input, result)
-                    return result
-
-        self._update_history(user_input, reply.content)
-        return reply.content
+        return "未知工具调用"
 
     def _update_history(self, user_input, reply):
         self.history.append({"role": "user", "parts": [user_input]})
