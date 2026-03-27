@@ -7,7 +7,7 @@ from git_manager import GitManager
 
 # ========== 配置 ==========
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-MODEL_NAME = os.getenv("GROQ_MODEL", "llama-4-maverick")
+MODEL_NAME = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # ========== 定时任务管理 ==========
 scheduled_tasks = {}
@@ -48,6 +48,19 @@ def get_time() -> str:
     """获取当前时间"""
     now = datetime.now()
     return f"🕐 当前时间：{now.strftime('%Y年%m月%d日 %H:%M:%S')}"
+
+def read_file(filepath: str) -> str:
+    """读取文件内容"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if len(content) > 1900:
+                content = content[:1900] + "\n... (文件过长，已截断)"
+            return f"📄 文件 {filepath} 的内容：\n```python\n{content}\n```"
+    except FileNotFoundError:
+        return f"❌ 文件不存在: {filepath}"
+    except Exception as e:
+        return f"❌ 读取失败: {str(e)}"
 
 def set_daily_message(channel_id: str, message: str, hour: int, minute: int) -> str:
     """设置每日定时消息"""
@@ -105,6 +118,23 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_file",
+            "description": "读取文件内容。当用户说'读取 bot.py'、'查看 agent.py'、'显示 git_manager.py'时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "要读取的文件路径，例如 bot.py、agent.py、git_manager.py"
+                    }
+                },
+                "required": ["filepath"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_daily_message",
             "description": "设置每日定时消息，每天固定时间在当前频道发送消息",
             "parameters": {
@@ -129,19 +159,20 @@ TOOLS = [
 ]
 
 SYSTEM_INSTRUCTION = """
-你是 Discord 机器人，名叫 Gemini（但实际用的是 Groq）。你的职责：
+你是 Discord 机器人。你的职责：
 
-1. **聊天**：正常对话，友好回复。用户说"你好"时问候即可。
-2. **查询时间**：只有用户明确说"现在几点"、"时间"、"几点了"时，才调用 get_time 工具。
-3. **修改代码**：只有用户明确说"改代码"、"修改"、"把XX改成XX"时，才调用 apply_code_patch 工具。
-4. **定时任务**：用户说"每天X点发消息"、"定时发送"时，调用 set_daily_message 工具。
-5. **查看任务**：用户说"查看任务"、"列出任务"时，调用 list_tasks 工具。
+1. **聊天**：正常对话，友好回复。
+2. **查询时间**：用户说"现在几点"、"时间"时，调用 get_time 工具。
+3. **读取文件**：用户说"读取 bot.py"、"查看 agent.py"时，调用 read_file 工具。
+4. **修改代码**：用户说"改代码"、"修改"、"把XX改成XX"时，调用 apply_code_patch 工具。
+5. **定时任务**：用户说"每天X点发消息"时，调用 set_daily_message 工具。
+6. **查看任务**：用户说"查看任务"、"列出任务"时，调用 list_tasks 工具。
 
 **重要规则**：
 - 不要主动调用任何工具
 - 不要猜测用户意图
 - 修改代码前必须先展示补丁，等待用户确认（yes/no）
-- 使用中文回复，保持友好、有帮助的语气
+- 使用中文回复，保持友好
 
 现在开始！
 """
@@ -220,6 +251,12 @@ class Agent:
 
                     elif func_name == "get_time":
                         result = get_time()
+                        self._update_history(user_input, result)
+                        return result
+
+                    elif func_name == "read_file":
+                        filepath = args.get("filepath", "")
+                        result = read_file(filepath)
                         self._update_history(user_input, result)
                         return result
 
