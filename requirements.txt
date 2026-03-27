@@ -1,8 +1,8 @@
 discord.py
 python-dotenv
-groq
+cerebras-cloud-sdk
 google-generativeai
-together
+groq
 gitpython
 requests
 beautifulsoup4
