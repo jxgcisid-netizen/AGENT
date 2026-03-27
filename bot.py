@@ -42,18 +42,9 @@ async def ping(ctx):
     await ctx.send(f"🏓 Pong! 延迟: {round(bot.latency * 1000)}ms")
 
 @bot.command()
-async def eval(ctx, *, code: str):
-    """执行 Python 代码（仅限授权用户）"""
-    authorized = os.getenv("AUTHORIZED_USERS", "").split(",")
-    if str(ctx.author.id) not in authorized:
-        return await ctx.send("❌ 无权限")
-    try:
-        exec_globals = {}
-        exec(code, exec_globals)
-        result = exec_globals.get("result", "无返回值")
-        await ctx.send(f"✅ 执行成功\n```\n{result}\n```")
-    except Exception as e:
-        await ctx.send(f"❌ 错误：{e}")
+async def hello(ctx):
+    """打招呼"""
+    await ctx.send(f"你好 {ctx.author.name}！")
 
 # 运行 bot
 if __name__ == "__main__":
