@@ -1,6 +1,8 @@
 discord.py
 python-dotenv
-google-generativeai
 groq
+google-generativeai
 together
 gitpython
+requests
+beautifulsoup4
