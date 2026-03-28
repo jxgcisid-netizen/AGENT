@@ -72,8 +72,7 @@ async def on_message(message):
         if user_id in user_channels:
             if channel_id == user_channels[user_id]:
                 should_respond = True
-        else:
-            should_respond = True
+        
     
     if should_respond and user_content:
         async with message.channel.typing():
