@@ -8,10 +8,17 @@ from agent import Agent
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# 创建 bot
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all(), help_command=None)
-agent = Agent()
-agent.set_bot(bot)
+
+# 存储每个用户的 Agent 实例
+user_agents = {}
+
+def get_agent(user_id: str) -> Agent:
+    """获取或创建用户的 Agent"""
+    if user_id not in user_agents:
+        user_agents[user_id] = Agent(user_id)
+        user_agents[user_id].set_bot(bot)
+    return user_agents[user_id]
 
 # 存储用户指定的频道
 user_channels = {}
@@ -23,7 +30,6 @@ async def on_ready():
     print(f"Bot ID: {bot.user.id}")
     print(f"已连接到 {len(bot.guilds)} 个服务器")
     
-    # 同步斜杠命令
     try:
         synced = await bot.tree.sync()
         print(f"✅ 已同步 {len(synced)} 个斜杠命令")
@@ -37,75 +43,102 @@ async def on_message(message):
     
     await bot.process_commands(message)
     
-    # 检查是否在指定频道对话
     user_id = str(message.author.id)
     channel_id = str(message.channel.id)
     
-    # 如果用户设置了指定频道，只在那个频道回复
+    is_mentioned = bot.user in message.mentions
+    
+    # 检查频道设置
     if user_id in user_channels:
         target_channel = user_channels[user_id]
-        if channel_id != target_channel:
-            return  # 不在指定频道，不回复
+        if channel_id != target_channel and not is_mentioned:
+            return
     
-    # 普通消息（不以 ! 开头）交给 Agent 处理
-    if not message.content.startswith("!"):
+    should_respond = False
+    user_content = message.content
+    
+    # 处理 @ 提及
+    if is_mentioned:
+        for mention in message.mentions:
+            user_content = user_content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "").strip()
+        should_respond = True
+    
+    # 处理命令
+    if message.content.startswith("!"):
+        return
+    
+    # 普通消息
+    if not message.content.startswith("!") and not is_mentioned:
+        if user_id in user_channels:
+            if channel_id == user_channels[user_id]:
+                should_respond = True
+        else:
+            should_respond = True
+    
+    if should_respond and user_content:
         async with message.channel.typing():
             try:
-                result = await agent.run(
-                    message.content, 
-                    user_id, 
-                    message.channel
-                )
+                agent = get_agent(user_id)
+                result = await agent.run(user_content, message.author.name, message.channel)
                 if result:
                     for chunk in [result[i:i+2000] for i in range(0, len(result), 2000)]:
-                        await message.channel.send(chunk)
+                        await message.channel.send(f"{message.author.mention} {chunk}")
             except Exception as e:
                 print(f"错误: {e}")
-                await message.channel.send(f"❌ 出错了：{str(e)[:200]}")
+                await message.channel.send(f"{message.author.mention} ❌ 出错了：{str(e)[:200]}")
 
 # ========== 斜杠命令 ==========
 
 @bot.tree.command(name="chat", description="在当前位置开始对话")
 async def slash_chat(interaction: discord.Interaction):
-    """在当前频道启用对话"""
     user_id = str(interaction.user.id)
     channel_id = str(interaction.channel_id)
     
-    # 清除该用户的频道设置
     if user_id in user_channels:
         del user_channels[user_id]
     
     await interaction.response.send_message(
-        f"✅ 已在此频道启用对话。你可以直接发送消息和我聊天啦！\n"
-        f"使用 `/set channel` 可以指定其他频道。",
+        f"✅ 已在此频道启用对话。直接发消息我就会回复你（会 @ 你哦）。",
         ephemeral=True
     )
 
 @bot.tree.command(name="set", description="设置对话频道")
 @app_commands.describe(channel="要设置的频道")
 async def slash_set(interaction: discord.Interaction, channel: discord.TextChannel):
-    """设置指定频道为对话频道"""
     user_id = str(interaction.user.id)
     channel_id = str(channel.id)
     
     user_channels[user_id] = channel_id
     
     await interaction.response.send_message(
-        f"✅ 已将对话频道设置为 {channel.mention}\n"
-        f"以后我只会在这个频道回复你的消息。\n"
-        f"使用 `/chat` 可以恢复在当前频道对话。",
+        f"✅ 已将对话频道设置为 {channel.mention}\n以后我只会在这个频道回复你（会 @ 你哦）。",
         ephemeral=True
     )
 
+@bot.tree.command(name="model", description="切换AI模型")
+@app_commands.describe(model="模型名称: gpt, kimi, scout")
+async def slash_model(interaction: discord.Interaction, model: str):
+    """切换模型"""
+    user_id = str(interaction.user.id)
+    agent = get_agent(user_id)
+    result = agent.switch_model(model)
+    await interaction.response.send_message(result, ephemeral=True)
+
 @bot.tree.command(name="help", description="查看所有命令")
 async def slash_help(interaction: discord.Interaction):
-    """显示帮助信息"""
     help_text = """
 **🤖 斜杠命令**
 
 `/chat` - 在当前频道启用对话
 `/set channel` - 设置指定频道为对话频道
+`/model gpt/kimi/scout` - 切换AI模型
 `/help` - 显示此帮助
+`/reset` - 重置对话历史
+
+**当前可用模型：**
+- `gpt` - 🧠 智商最高，速度最快
+- `kimi` - 🇨🇳 中文最好，表达自然
+- `scout` - ⚡ 速度极快，智商够用
 
 **基础命令：**
 `!ping` - 测试延迟
@@ -113,7 +146,7 @@ async def slash_help(interaction: discord.Interaction):
 `!reset` - 重置对话历史
 
 **AI 对话：**
-直接发送消息即可与我对话
+直接发送消息，我会 @ 你并回复
 
 **功能：**
 - 🕐 时间查询：`现在几点`
@@ -129,11 +162,12 @@ async def slash_help(interaction: discord.Interaction):
 
 @bot.tree.command(name="reset", description="重置对话历史")
 async def slash_reset(interaction: discord.Interaction):
-    """重置对话历史"""
     user_id = str(interaction.user.id)
+    agent = get_agent(user_id)
     agent.history = []
     agent.waiting_for_confirmation = False
     agent.pending_patch = None
+    save_history(user_id, [])
     
     await interaction.response.send_message(
         "✅ 对话历史已重置",
@@ -144,21 +178,22 @@ async def slash_reset(interaction: discord.Interaction):
 
 @bot.command()
 async def ping(ctx):
-    await ctx.send(f"🏓 Pong! 延迟: {round(bot.latency * 1000)}ms")
+    await ctx.send(f"{ctx.author.mention} 🏓 Pong! 延迟: {round(bot.latency * 1000)}ms")
 
 @bot.command()
 async def hello(ctx):
-    await ctx.send(f"你好 {ctx.author.name}！")
+    await ctx.send(f"{ctx.author.mention} 你好 {ctx.author.name}！")
 
 @bot.command()
 async def reset(ctx):
-    """重置对话历史"""
+    user_id = str(ctx.author.id)
+    agent = get_agent(user_id)
     agent.history = []
     agent.waiting_for_confirmation = False
     agent.pending_patch = None
-    await ctx.send("✅ 对话已重置")
+    save_history(user_id, [])
+    await ctx.send(f"{ctx.author.mention} ✅ 对话已重置")
 
-# 运行 bot
 if __name__ == "__main__":
     print("正在启动机器人...")
     bot.run(TOKEN)
