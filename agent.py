@@ -2,63 +2,53 @@ import os
 import json
 import asyncio
 import requests
+import logging
 from datetime import datetime
 from groq import Groq
+from openai import OpenAI
 from git_manager import GitManager
 from bs4 import BeautifulSoup
-from db import init_db, save_history, load_history, save_model_preference, load_model_preference
+from db import init_db, save_history, load_history, save_user_preference, load_user_preference
+from memory import save_memory, search_memory
+from knowledge import query_knowledge
 
-# 初始化数据库
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 init_db()
 
 # ========== 配置 ==========
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+nvidia_client = OpenAI(
+    api_key=os.getenv("NVIDIA_API_KEY"),
+    base_url="https://integrate.api.nvidia.com/v1"
+)
 
-# 可用模型
-AVAILABLE_MODELS = {
+MODELS = {
     "gpt": {
+        "provider": "groq",
         "name": "openai/gpt-oss-120b",
         "description": "🧠 智商最高，速度最快"
     },
     "kimi": {
+        "provider": "groq",
         "name": "moonshotai/kimi-k2-instruct",
         "description": "🇨🇳 中文最好，表达自然"
     },
-    "scout": {
-        "name": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "description": "⚡ 速度极快，智商够用"
+    "deepseek": {
+        "provider": "nvidia",
+        "name": "deepseek-ai/deepseek-v3",
+        "description": "🔍 推理能力强，数学好"
+    },
+    "qwen": {
+        "provider": "nvidia",
+        "name": "qwen/qwen2.5-72b-instruct",
+        "description": "🌏 阿里Qwen，中文强"
     }
 }
-DEFAULT_MODEL = "openai/gpt-oss-120b"
 
-print(f"🚀 默认模型: GPT-OSS 120B")
-
-# ========== 定时任务 ==========
-scheduled_tasks = {}
-one_time_tasks = {}
-
-async def schedule_daily_message(bot, channel_id, message, hour, minute):
-    while True:
-        now = datetime.now()
-        target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if now >= target_time:
-            target_time = target_time.replace(day=now.day + 1)
-        await asyncio.sleep((target_time - now).total_seconds())
-        try:
-            channel = bot.get_channel(int(channel_id))
-            if channel:
-                await channel.send(message)
-        except Exception as e:
-            print(f"定时消息失败: {e}")
-
-async def schedule_one_time_task(bot, channel_id, message, seconds):
-    await asyncio.sleep(seconds)
-    try:
-        channel = bot.get_channel(int(channel_id))
-        if channel:
-            await channel.send(f"⏰ 提醒：{message}")
-    except Exception as e:
-        print(f"提醒失败: {e}")
+DEFAULT_MODEL = "gpt"
+MAX_HISTORY = 50
 
 # ========== 工具函数 ==========
 def get_time():
@@ -68,7 +58,7 @@ def apply_code_patch(patch_text, commit_message="Self-modify"):
     try:
         gm = GitManager(repo_path=os.getcwd())
         if gm.apply_patch(patch_text, commit_message):
-            return "✅ 代码已修改并推送，Railway 将自动重新部署。"
+            return "✅ 代码已修改并推送"
         return "❌ 修改失败"
     except Exception as e:
         return f"❌ 错误：{e}"
@@ -100,62 +90,11 @@ def search_web(query):
     except Exception as e:
         return f"❌ 搜索失败: {e}"
 
-def set_daily_message(channel_id, message, hour, minute):
-    task_id = f"daily_{channel_id}_{hour}_{minute}"
-    scheduled_tasks[task_id] = {"channel_id": channel_id, "message": message, "hour": hour, "minute": minute}
-    return f"✅ 已设置每日 {hour:02d}:{minute:02d} 在此频道发送消息"
-
-def set_one_time_reminder(channel_id, message, seconds):
-    task_id = f"once_{channel_id}_{int(datetime.now().timestamp())}"
-    one_time_tasks[task_id] = {"channel_id": channel_id, "message": message, "seconds": seconds}
-    if seconds < 60:
-        return f"✅ 已设置 {seconds} 秒后提醒：{message}"
-    elif seconds < 3600:
-        return f"✅ 已设置 {seconds//60} 分钟后提醒：{message}"
-    else:
-        return f"✅ 已设置 {seconds//3600} 小时后提醒：{message}"
-
-def delete_task(task_description):
-    if "每天" in task_description or "每日" in task_description:
-        for task_id in list(scheduled_tasks.keys()):
-            task = scheduled_tasks[task_id]
-            if task_description in task["message"]:
-                del scheduled_tasks[task_id]
-                return f"✅ 已删除：{task['message']}"
-        return "❌ 未找到"
-    else:
-        count = len(one_time_tasks)
-        one_time_tasks.clear()
-        return f"✅ 已删除 {count} 个一次性提醒"
-
-def list_tasks():
-    result = []
-    if scheduled_tasks:
-        result.append("📋 每日任务：")
-        for t in scheduled_tasks.values():
-            result.append(f"  - {t['hour']:02d}:{t['minute']:02d}: {t['message'][:50]}")
-    if one_time_tasks:
-        result.append("\n⏰ 一次性：")
-        for t in one_time_tasks.values():
-            sec = t["seconds"]
-            if sec < 60:
-                result.append(f"  - {sec}秒后: {t['message'][:50]}")
-            elif sec < 3600:
-                result.append(f"  - {sec//60}分钟后: {t['message'][:50]}")
-            else:
-                result.append(f"  - {sec//3600}小时后: {t['message'][:50]}")
-    return "\n".join(result) if result else "📭 无任务"
-
-# ========== 工具定义 ==========
 TOOLS = [
     {"type": "function", "function": {"name": "get_time", "description": "获取时间", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "apply_code_patch", "description": "修改代码", "parameters": {"type": "object", "properties": {"patch_text": {"type": "string"}}, "required": ["patch_text"]}}},
     {"type": "function", "function": {"name": "read_file", "description": "读取文件", "parameters": {"type": "object", "properties": {"filepath": {"type": "string"}}, "required": ["filepath"]}}},
-    {"type": "function", "function": {"name": "search_web", "description": "搜索", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "set_daily_message", "description": "每日定时", "parameters": {"type": "object", "properties": {"message": {"type": "string"}, "hour": {"type": "integer"}, "minute": {"type": "integer"}}, "required": ["message", "hour", "minute"]}}},
-    {"type": "function", "function": {"name": "set_one_time_reminder", "description": "一次性提醒", "parameters": {"type": "object", "properties": {"message": {"type": "string"}, "seconds": {"type": "integer"}}, "required": ["message", "seconds"]}}},
-    {"type": "function", "function": {"name": "delete_task", "description": "删除任务", "parameters": {"type": "object", "properties": {"task_description": {"type": "string"}}, "required": ["task_description"]}}},
-    {"type": "function", "function": {"name": "list_tasks", "description": "列出任务", "parameters": {"type": "object", "properties": {}}}}
+    {"type": "function", "function": {"name": "search_web", "description": "搜索", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
 ]
 
 SYSTEM_INSTRUCTION = """你是 Discord 机器人。
@@ -164,51 +103,55 @@ SYSTEM_INSTRUCTION = """你是 Discord 机器人。
 - 说"读取 bot.py"时调用 read_file
 - 说"搜索XX"时调用 search_web
 - 说"改代码"时调用 apply_code_patch
-- 说"每天X点发消息"时调用 set_daily_message
-- 说"X分钟后提醒我"时调用 set_one_time_reminder
-- 说"删除提醒"时调用 delete_task
-- 说"查看任务"时调用 list_tasks
-- 修改代码前必须展示补丁，等用户确认
 - 用中文回复"""
 
 class Agent:
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self.history = load_history(user_id)
+        self.history = load_history(user_id)[-MAX_HISTORY:]
         self.pending_patch = None
         self.waiting_for_confirmation = False
         self.bot = None
         
-        # 加载用户偏好的模型
-        preferred = load_model_preference(user_id)
-        if preferred and preferred in AVAILABLE_MODELS:
-            self.current_model = AVAILABLE_MODELS[preferred]["name"]
-            print(f"用户 {user_id} 使用模型: {preferred}")
+        preferred_model, _ = load_user_preference(user_id)
+        if preferred_model and preferred_model in MODELS:
+            self.current_model_key = preferred_model
         else:
-            self.current_model = DEFAULT_MODEL
+            self.current_model_key = DEFAULT_MODEL
 
     def set_bot(self, bot):
         self.bot = bot
 
     def switch_model(self, model_key: str) -> str:
-        """切换模型"""
-        if model_key not in AVAILABLE_MODELS:
-            keys = ", ".join(AVAILABLE_MODELS.keys())
-            return f"❌ 可用模型: {keys}\n当前: {self.get_current_model()}"
+        if model_key not in MODELS:
+            keys = ", ".join(MODELS.keys())
+            return f"❌ 可用模型: {keys}"
         
-        self.current_model = AVAILABLE_MODELS[model_key]["name"]
-        save_model_preference(self.user_id, model_key)
-        return f"✅ 已切换到 **{model_key}** 模型\n{AVAILABLE_MODELS[model_key]['description']}"
+        self.current_model_key = model_key
+        save_user_preference(self.user_id, model_key, MODELS[model_key]["provider"])
+        return f"✅ 已切换到 **{model_key}**\n{MODELS[model_key]['description']}"
 
-    def get_current_model(self) -> str:
-        """获取当前模型名"""
-        for key, val in AVAILABLE_MODELS.items():
-            if val["name"] == self.current_model:
-                return key
-        return "unknown"
+    async def _call_groq(self, messages):
+        return groq_client.chat.completions.create(
+            model=MODELS[self.current_model_key]["name"],
+            messages=messages,
+            temperature=0.5,
+            max_tokens=2048,
+            tools=TOOLS,
+            tool_choice="auto"
+        )
 
-    async def run(self, user_input, user_name, channel=None):
-        # 确认处理
+    async def _call_nvidia(self, messages):
+        return nvidia_client.chat.completions.create(
+            model=MODELS[self.current_model_key]["name"],
+            messages=messages,
+            temperature=0.5,
+            max_tokens=2048,
+            tools=TOOLS,
+            tool_choice="auto"
+        )
+
+    async def run(self, user_input, channel=None):
         if self.waiting_for_confirmation:
             if user_input.lower() in ["yes", "是", "确认", "y"]:
                 self.waiting_for_confirmation = False
@@ -222,34 +165,43 @@ class Agent:
             else:
                 return "回复 yes 确认，no 取消"
 
-        # 重置命令
-        if user_input in ["!reset", "重置"]:
+        if user_input in ["/reset", "重置"]:
             self.history = []
             save_history(self.user_id, self.history)
             return "✅ 已重置"
 
-        # 模型切换命令
         if user_input.startswith("/model"):
             parts = user_input.split()
             if len(parts) == 2:
                 return self.switch_model(parts[1])
-            keys = ", ".join(AVAILABLE_MODELS.keys())
-            return f"用法: `/model <模型>`\n可用模型: {keys}\n当前: {self.get_current_model()}"
+            keys = ", ".join(MODELS.keys())
+            return f"用法: `/model <模型>`\n可用: {keys}\n当前: {self.current_model_key}"
+
+        # 先查知识库
+        knowledge_answer = query_knowledge(user_input)
+        if knowledge_answer:
+            return knowledge_answer
+
+        # 查向量记忆
+        memories = search_memory(self.user_id, user_input)
+        context = ""
+        if memories:
+            context = "\n相关记忆：\n" + "\n".join(memories[:2])
 
         try:
             messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
             for msg in self.history:
                 messages.append({"role": msg["role"], "content": msg["parts"][0]})
-            messages.append({"role": "user", "content": user_input})
+            if context:
+                messages.append({"role": "user", "content": f"历史上下文：{context}\n\n当前问题：{user_input}"})
+            else:
+                messages.append({"role": "user", "content": user_input})
 
-            response = client.chat.completions.create(
-                model=self.current_model,
-                messages=messages,
-                temperature=0.5,
-                max_tokens=2048,
-                tools=TOOLS,
-                tool_choice="auto"
-            )
+            provider = MODELS[self.current_model_key]["provider"]
+            if provider == "groq":
+                response = await self._call_groq(messages)
+            else:
+                response = await self._call_nvidia(messages)
 
             reply = response.choices[0].message
 
@@ -257,13 +209,15 @@ class Agent:
                 return await self._handle_tools(reply, user_input, channel)
 
             self._update_history(user_input, reply.content)
+            save_memory(self.user_id, user_input, {"type": "user_question"})
+            save_memory(self.user_id, reply.content, {"type": "bot_response"})
             return reply.content
 
         except Exception as e:
-            return f"❌ 错误：{e}"
+            logger.error(f"API错误: {e}")
+            return f"❌ 错误：{str(e)}"
 
     async def _handle_tools(self, reply, user_input, channel):
-        """处理工具调用"""
         for tc in reply.tool_calls:
             func = tc.function.name
             args = json.loads(tc.function.arguments)
@@ -288,41 +242,11 @@ class Agent:
                 self._update_history(user_input, result)
                 return result
 
-            elif func == "set_daily_message":
-                if not self.bot or not channel:
-                    result = "❌ 需要频道"
-                else:
-                    asyncio.create_task(schedule_daily_message(
-                        self.bot, str(channel.id), args["message"], args["hour"], args["minute"]
-                    ))
-                    result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
-                self._update_history(user_input, result)
-                return result
-
-            elif func == "set_one_time_reminder":
-                if not self.bot or not channel:
-                    result = "❌ 需要频道"
-                else:
-                    asyncio.create_task(schedule_one_time_task(
-                        self.bot, str(channel.id), args["message"], args["seconds"]
-                    ))
-                    result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
-                self._update_history(user_input, result)
-                return result
-
-            elif func == "delete_task":
-                result = delete_task(args.get("task_description"))
-                self._update_history(user_input, result)
-                return result
-
-            elif func == "list_tasks":
-                result = list_tasks()
-                self._update_history(user_input, result)
-                return result
-
         return "未知工具调用"
 
     def _update_history(self, user_input, reply):
         self.history.append({"role": "user", "parts": [user_input]})
         self.history.append({"role": "assistant", "parts": [reply]})
+        if len(self.history) > MAX_HISTORY:
+            self.history = self.history[-MAX_HISTORY:]
         save_history(self.user_id, self.history)
