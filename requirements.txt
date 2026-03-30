@@ -7,3 +7,5 @@ requests
 beautifulsoup4
 pinecone
 numpy
+flask
+flask-cors
