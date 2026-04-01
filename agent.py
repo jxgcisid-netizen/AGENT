@@ -42,43 +42,43 @@ MODELS = {
     "minimax": {
         "provider": "nvidia",
         "name": "minimaxai/minimax-m2.5",
-        "description": "⚡ MiniMax M2.5 - 多语言编码最强",
+        "description": "🏆 综合最强，代码第一，无限Token",
         "client": nvidia_client if nvidia_client else None,
         "reasoning": True
     },
     "glm": {
         "provider": "nvidia",
         "name": "z-ai/glm5",
-        "description": "🇨🇳 智谱GLM-5 - 中文能力顶尖",
+        "description": "🇨🇳 中文最强，工具调用95%+，无限Token",
+        "client": nvidia_client if nvidia_client else None,
+        "reasoning": True
+    },
+    "deepseek": {
+        "provider": "nvidia",
+        "name": "deepseek-ai/deepseek-v3",
+        "description": "🔍 推理强，数学好，无限Token",
         "client": nvidia_client if nvidia_client else None,
         "reasoning": True
     },
     "qwen": {
         "provider": "nvidia",
         "name": "qwen/qwen2.5-72b-instruct",
-        "description": "🌏 阿里Qwen - 中文强",
+        "description": "🌏 阿里Qwen，中文优秀，无限Token",
         "client": nvidia_client if nvidia_client else None,
         "reasoning": False
-    },
-    "deepseek": {
-        "provider": "nvidia",
-        "name": "deepseek-ai/deepseek-v3",
-        "description": "🔍 DeepSeek V3 - 推理强",
-        "client": nvidia_client if nvidia_client else None,
-        "reasoning": True
     },
     # Groq 模型（备用）
     "gpt": {
         "provider": "groq",
         "name": "openai/gpt-oss-120b",
-        "description": "🧠 GPT-OSS 120B - 备用",
+        "description": "🧠 GPT-OSS 120B，速度快",
         "client": groq_client,
         "reasoning": True
     },
     "kimi": {
         "provider": "groq",
         "name": "moonshotai/kimi-k2-instruct",
-        "description": "🇨🇳 Kimi K2 - 中文备用",
+        "description": "🇨🇳 Kimi K2，中文优秀",
         "client": groq_client,
         "reasoning": False
     }
@@ -87,7 +87,7 @@ MODELS = {
 # 过滤掉 client 为 None 的模型（NVIDIA 未配置时）
 MODELS = {k: v for k, v in MODELS.items() if v["client"] is not None}
 
-DEFAULT_MODEL = "minimax" if nvidia_client else "gpt"  # 优先用 MiniMax
+DEFAULT_MODEL = "minimax" if nvidia_client else "gpt"
 MAX_HISTORY = 15
 MAX_TOKENS = 600
 
@@ -331,22 +331,36 @@ TOOLS = [
 SYSTEM_INSTRUCTION = """
 你是 Gemini，一个顶级智能的 Discord 机器人，使用 NVIDIA NIM 平台（无限 Token），中文能力极强。
 
-**核心规则：**
-1. 问候（你好、嗨）→ 友好回应
-2. 时间（现在几点）→ get_time
-3. 搜索（搜索XX）→ search_web
-4. 读文件（读取XX）→ read_file
-5. 改代码（把XX改成XX）→ apply_code_patch
-6. 定时（每天X点、X分钟后）→ set_daily_message / set_one_time_reminder
-7. 任务管理（查看任务、删除提醒）→ list_tasks / delete_task
+## 核心规则
 
-**自动建站规则：**
-- 用户说“帮我搭个网站”时，先生成简洁英文仓库名，调用 create_github_repo，再调用 deploy_website
+### 1. 普通对话
+- 用户说“你好”、“嗨” → 友好问候
+- 用户问“现在几点” → 调用 get_time
+- 用户说“搜索XX” → 调用 search_web
+- 用户说“读取XX” → 调用 read_file
+- 用户说“改代码”、“把XX改成XX” → 调用 apply_code_patch
+- 用户说“X分钟后提醒我” → 调用 set_one_time_reminder
+- 用户说“每天X点发消息” → 调用 set_daily_message
+- 用户说“查看任务” → 调用 list_tasks
+- 用户说“删除提醒” → 调用 delete_task
+- 用户说“帮我搭个网站” → 调用 create_github_repo + deploy_website
 
-**风格要求：**
-- 用中文，简洁精准
+### 2. 知识库（润色后回答）
+只有当用户问以下内容时，才查询知识库并用自然语言回答：
+- “你有什么功能”
+- “你会做什么”
+- “怎么用你”
+- “你能做什么”
+- “你有什么用”
+- “功能列表”
+
+**严禁**：不要把“XX模型是什么”等问题当成知识库查询。
+
+### 3. 风格要求
+- 用中文回复，简洁精准
 - 复杂问题分步骤解释
-- 不确定时主动询问
+- 回答代码时用 ``` 包裹
+- 语气友好自然
 
 现在开始！
 """
@@ -400,7 +414,6 @@ class Agent:
         except Exception as e:
             logger.error(f"模型调用失败 ({self.current_model_key}): {e}")
             if retry:
-                # 尝试切换到第一个可用的备用模型
                 for key in MODELS.keys():
                     if key != self.current_model_key:
                         self.current_model_key = key
@@ -429,7 +442,7 @@ class Agent:
             save_history(self.user_id, self.history)
             return "✅ 对话已重置"
 
-        # 模型切换命令
+        # 模型切换命令（已由 bot.py 处理，这里保留备用）
         if user_input.startswith("/model"):
             parts = user_input.split()
             if len(parts) == 2:
@@ -441,13 +454,37 @@ class Agent:
         if user_input in ["/help", "帮助", "help"]:
             return self._get_help_text()
 
-        # 只在明确问功能时查知识库
-        help_keywords = ["功能", "帮助", "怎么用", "能做什么", "命令", "模型", "介绍", "你会", "你能", "你有什么"]
-        is_asking_help = any(kw in user_input for kw in help_keywords) and len(user_input) < 30
+        # ---------- 知识库查询（润色后回答） ----------
+        help_phrases = [
+            "你有什么功能",
+            "你会做什么",
+            "怎么用你",
+            "你能做什么",
+            "你有什么用",
+            "功能列表",
+            "帮助"
+        ]
+        is_asking_help = any(phrase in user_input for phrase in help_phrases)
+
         if is_asking_help:
             knowledge = search_knowledge(user_input)
             if knowledge:
-                return "📚 知识库：\n\n" + "\n---\n".join(knowledge)
+                # 让 AI 理解知识库内容，用自然语言说出来
+                knowledge_text = "\n".join(knowledge)
+                messages = [{"role": "system", "content": "你是 Gemini 智能助手。请根据以下知识库内容，用自然、友好的方式回答用户的问题，不要直接复制粘贴。"}]
+                for msg in self.history:
+                    messages.append({"role": msg["role"], "content": msg["parts"][0]})
+                messages.append({"role": "user", "content": f"知识库内容：\n{knowledge_text}\n\n用户问：{user_input}\n请根据知识库内容，用你自己的话自然回答。"})
+                
+                try:
+                    response = await self._call_model(messages)
+                    reply = response.choices[0].message.content
+                    self._update_history(user_input, reply)
+                    return reply
+                except Exception as e:
+                    logger.error(f"润色知识库失败: {e}")
+                    # 降级：直接返回知识库内容
+                    return "📚 知识库：\n\n" + "\n---\n".join(knowledge)
 
         # 查记忆
         memories = search_memory(self.user_id, user_input)
@@ -578,26 +615,36 @@ class Agent:
 
     def _get_help_text(self):
         return """
-**🤖 Gemini 智能助手 (NVIDIA 无限 Token)**
+**🤖 Gemini 智能助手**
 
-**当前模型:** 🧠 MiniMax M2.5 / GLM-5
+**当前模型:** 🧠 MiniMax M2.5 (综合最强)
 
 **斜杠命令:**
-`/model minimax/glm/qwen/deepseek/gpt/kimi` - 切换模型
-`/reset` - 重置对话
-`/help` - 帮助
+`/model` - 打开模型选择菜单
+`/set channel` - 设置专属频道
+`/chat` - 在当前频道启用对话
+`/reset` - 重置对话历史
+`/help` - 显示此帮助
 
-**功能:**
-- 🕐 `现在几点` - 时间
+**可用模型（6个）:**
+- 🏆 **MiniMax M2.5** - 综合最强，代码第一（无限Token）
+- 🇨🇳 **GLM-5** - 中文最强，工具调用95%+（无限Token）
+- 🔍 **DeepSeek V3** - 推理强，数学好（无限Token）
+- 🌏 **Qwen 2.5** - 阿里Qwen，中文优秀（无限Token）
+- ⚡ **GPT-OSS 120B** - 速度快，备用（Groq）
+- 💬 **Kimi K2** - 中文好，备用（Groq）
+
+**对话功能:**
+- 🕐 `现在几点` - 获取时间
 - 🔍 `搜索 关键词` - 联网搜索
-- 📄 `读取 bot.py` - 读文件
-- ✏️ `把命令前缀改成 $` - 改代码
-- ⏰ `10分钟后提醒我` - 提醒
+- 📄 `读取 bot.py` - 读取文件
+- ✏️ `把命令前缀改成 $` - 修改代码
+- ⏰ `10分钟后提醒我` - 一次性提醒
 - 📅 `每天9点发消息` - 每日定时
-- 📋 `查看任务` - 任务列表
+- 📋 `查看任务` - 查看所有任务
 - 🌐 `帮我搭个网站` - 自动建站
 
-直接聊天就行，我会自动理解你的需求!
+直接发消息就能和我聊天！
 """
 
     def _update_history(self, user_input, reply):
