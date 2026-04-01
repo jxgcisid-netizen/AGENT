@@ -242,7 +242,7 @@ class Agent:
             "model": model_name,
             "messages": messages,
             "temperature": 0.3,  # 降低温度，提高准确性
-            "max_tokens": 4096,
+            "max_tokens": 1024,
             "tools": TOOLS,
             "tool_choice": "auto"
         }
