@@ -328,75 +328,94 @@ class Agent:
             logger.error(f"错误: {e}")
             return f"❌ 错误：{str(e)[:200]}"
 
-    async def _handle_tools(self, reply, user_input, channel):
-        for tc in reply.tool_calls:
-            func = tc.function.name
-            args = json.loads(tc.function.arguments)
+async def _handle_tools(self, reply, user_input, channel):
+    """处理工具调用，并让模型对结果进行润色"""
+    # 收集所有工具调用结果
+    tool_results = []
+    for tc in reply.tool_calls:
+        func = tc.function.name
+        args = json.loads(tc.function.arguments)
 
-            if func == "apply_code_patch":
-                self.pending_patch = args.get("patch_text")
-                self.waiting_for_confirmation = True
-                return f"📝 补丁预览：\n```diff\n{args.get('patch_text')}\n```\n是否应用？回复 yes"
+        if func == "apply_code_patch":
+            self.pending_patch = args.get("patch_text")
+            self.waiting_for_confirmation = True
+            # 补丁预览需要直接返回，不能润色
+            return f"📝 补丁预览：\n```diff\n{args.get('patch_text')}\n```\n是否应用？回复 yes"
 
-            elif func == "get_time":
-                result = get_time()
-                self._update_history(user_input, result)
-                return result
+        elif func == "get_time":
+            result = get_time()
+            tool_results.append(f"⏰ 当前时间是：{result}")
 
-            elif func == "read_file":
-                result = read_file(args.get("filepath"))
-                self._update_history(user_input, result)
-                return result
+        elif func == "read_file":
+            result = read_file(args.get("filepath"))
+            tool_results.append(result)
 
-            elif func == "search_web":
-                result = search_web(args.get("query"))
-                self._update_history(user_input, result)
-                return result
+        elif func == "search_web":
+            result = search_web(args.get("query"))
+            tool_results.append(result)
 
-            elif func == "set_daily_message":
-                if not self.bot or not channel:
-                    result = "❌ 需要频道信息"
-                else:
-                    asyncio.create_task(self._schedule_daily_message(
-                        str(channel.id), args["message"], args["hour"], args["minute"]
-                    ))
-                    result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
-                self._update_history(user_input, result)
-                return result
+        elif func == "set_daily_message":
+            if not self.bot or not channel:
+                result = "❌ 需要频道信息"
+            else:
+                asyncio.create_task(self._schedule_daily_message(
+                    str(channel.id), args["message"], args["hour"], args["minute"]
+                ))
+                result = set_daily_message(str(channel.id), args["message"], args["hour"], args["minute"])
+            tool_results.append(result)
 
-            elif func == "set_one_time_reminder":
-                if not self.bot or not channel:
-                    result = "❌ 需要频道信息"
-                else:
-                    asyncio.create_task(self._schedule_one_time_task(
-                        str(channel.id), args["message"], args["seconds"]
-                    ))
-                    result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
-                self._update_history(user_input, result)
-                return result
+        elif func == "set_one_time_reminder":
+            if not self.bot or not channel:
+                result = "❌ 需要频道信息"
+            else:
+                asyncio.create_task(self._schedule_one_time_task(
+                    str(channel.id), args["message"], args["seconds"]
+                ))
+                result = set_one_time_reminder(str(channel.id), args["message"], args["seconds"])
+            tool_results.append(result)
 
-            elif func == "delete_task":
-                result = delete_task(args.get("task_description"))
-                self._update_history(user_input, result)
-                return result
+        elif func == "delete_task":
+            result = delete_task(args.get("task_description"))
+            tool_results.append(result)
 
-            elif func == "list_tasks":
-                result = list_tasks()
-                self._update_history(user_input, result)
-                return result
+        elif func == "list_tasks":
+            result = list_tasks()
+            tool_results.append(result)
 
-        return "未知工具调用"
+    # 如果只有一个工具调用且是补丁，已经提前返回
+    if self.waiting_for_confirmation:
+        return  # 已在上面返回
 
-    async def _schedule_daily_message(self, channel_id, message, hour, minute):
-        from vector_store import schedule_daily_message
-        await schedule_daily_message(self.bot, channel_id, message, hour, minute)
+    # 将工具结果整合成一段文字
+    combined_result = "\n\n".join(tool_results)
 
-    async def _schedule_one_time_task(self, channel_id, message, seconds):
-        from vector_store import schedule_one_time_task
-        await schedule_one_time_task(self.bot, channel_id, message, seconds)
+    # 让模型对结果进行润色（再次调用模型）
+    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+    for msg in self.history:
+        messages.append({"role": msg["role"], "content": msg["parts"][0]})
+    # 加入工具结果
+    messages.append({"role": "user", "content": f"请根据以下信息，用自然、友好的方式回答用户的问题。\n用户问题：{user_input}\n工具返回结果：\n{combined_result}"})
 
-    def _get_help_text(self):
-        return """**🤖 Gemini 智能助手**
+    try:
+        response = await self._call_model(messages)
+        reply = response.choices[0].message
+
+        # 如果模型在润色时又调用了工具，递归处理（通常不会，但加个安全限制）
+        if reply.tool_calls and not getattr(self, "_in_repolish", False):
+            self._in_repolish = True
+            final = await self._handle_tools(reply, user_input, channel)
+            del self._in_repolish
+            return final
+
+        final_reply = reply.content
+        self._update_history(user_input, final_reply)
+        return final_reply
+
+    except Exception as e:
+        logger.error(f"润色失败: {e}")
+        # 降级：直接返回原始结果
+        self._update_history(user_input, combined_result)
+        return combined_result
 
 **当前模型：** 🧠 GPT-OSS 120B（智商最高）
 
