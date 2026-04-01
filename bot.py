@@ -19,7 +19,6 @@ def get_agent(user_id: str) -> Agent:
     return user_agents[user_id]
 
 def create_embed(title: str, content: str, color: int = 0x00ff00, footer: str = None):
-    """创建美观的 Discord Embed 消息"""
     embed = discord.Embed(title=title, description=content, color=color)
     embed.set_footer(text=footer or "🤖 Gemini 智能助手")
     return embed
@@ -78,15 +77,13 @@ async def on_message(message):
                 agent = get_agent(user_id)
                 result = await agent.run(content, message.channel)
                 if result:
-                    # 检测结果类型，选择合适的颜色
                     if "✅" in result or "成功" in result:
-                        color = 0x00ff00  # 绿色
+                        color = 0x00ff00
                     elif "❌" in result or "错误" in result or "失败" in result:
-                        color = 0xff0000  # 红色
+                        color = 0xff0000
                     else:
-                        color = 0x3498db  # 蓝色
+                        color = 0x3498db
                     
-                    # 创建 Embed 消息
                     embed = discord.Embed(
                         title="📢 回复",
                         description=result[:2000],
@@ -134,19 +131,99 @@ async def slash_set(interaction: discord.Interaction, channel: discord.TextChann
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="model", description="切换AI模型")
-@app_commands.describe(model="gpt / deepseek / kimi / qwen")
-async def slash_model(interaction: discord.Interaction, model: str):
+async def slash_model(interaction: discord.Interaction):
+    """显示模型选择下拉菜单"""
+    # 获取当前用户的模型
     user_id = str(interaction.user.id)
     agent = get_agent(user_id)
-    result = agent.switch_model(model)
+    current_model = agent.current_model_key
     
-    if "✅" in result:
-        color = 0x00ff00
-    else:
-        color = 0xff0000
+    # 定义模型选项（按平台分组）
+    class ModelSelect(discord.ui.Select):
+        def __init__(self, current_model):
+            options = [
+                # NVIDIA 模型（无限 Token）
+                discord.SelectOption(
+                    label="MiniMax M2.5", 
+                    value="minimax", 
+                    description="🏆 综合最强 | 代码能力第一 | 无限Token",
+                    emoji="🏆",
+                    default=current_model == "minimax"
+                ),
+                discord.SelectOption(
+                    label="GLM-5", 
+                    value="glm", 
+                    description="🇨🇳 中文最强 | 工具调用95%+ | 无限Token",
+                    emoji="🇨🇳",
+                    default=current_model == "glm"
+                ),
+                discord.SelectOption(
+                    label="DeepSeek V3", 
+                    value="deepseek", 
+                    description="🔍 推理强 | 数学好 | 无限Token",
+                    emoji="🔍",
+                    default=current_model == "deepseek"
+                ),
+                discord.SelectOption(
+                    label="Qwen 2.5", 
+                    value="qwen", 
+                    description="🌏 阿里Qwen | 中文优秀 | 无限Token",
+                    emoji="🌏",
+                    default=current_model == "qwen"
+                ),
+                # Groq 模型（有限 Token）
+                discord.SelectOption(
+                    label="GPT-OSS 120B", 
+                    value="gpt", 
+                    description="🧠 智商高 | 速度快 | 有限Token",
+                    emoji="⚡",
+                    default=current_model == "gpt"
+                ),
+                discord.SelectOption(
+                    label="Kimi K2", 
+                    value="kimi", 
+                    description="🇨🇳 中文优秀 | 备用模型 | 有限Token",
+                    emoji="💬",
+                    default=current_model == "kimi"
+                ),
+            ]
+            super().__init__(placeholder="选择 AI 模型...", options=options, min_values=1, max_values=1)
+        
+        async def callback(self, interaction: discord.Interaction):
+            selected = self.values[0]
+            agent = get_agent(str(interaction.user.id))
+            result = agent.switch_model(selected)
+            
+            # 获取模型详情
+            from agent import MODELS
+            model_info = MODELS.get(selected, {})
+            provider = model_info.get("provider", "unknown")
+            description = model_info.get("description", "")
+            
+            embed = discord.Embed(
+                title="🤖 模型切换",
+                description=f"{result}\n\n**平台:** {provider.upper()}\n{description}",
+                color=0x00ff00 if "✅" in result else 0xff0000
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     
-    embed = create_embed("🤖 模型切换", result, color)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    view = discord.ui.View()
+    view.add_item(ModelSelect(current_model))
+    
+    # 显示当前模型信息
+    from agent import MODELS
+    current_info = MODELS.get(current_model, {})
+    current_provider = current_info.get("provider", "unknown")
+    current_desc = current_info.get("description", "")
+    
+    embed = discord.Embed(
+        title="🎯 选择 AI 模型",
+        description=f"**当前模型:** {current_model.upper()} ({current_provider.upper()})\n{current_desc}\n\n请从下方下拉菜单选择新模型：",
+        color=0x3498db
+    )
+    embed.set_footer(text="NVIDIA 模型无限 Token | Groq 模型有速率限制")
+    
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name="reset", description="重置对话历史")
 async def slash_reset(interaction: discord.Interaction):
@@ -165,17 +242,19 @@ async def slash_help(interaction: discord.Interaction):
 **🤖 Gemini 智能助手**
 
 **斜杠命令:**
-`/model gpt/deepseek/kimi/qwen` - 切换模型
+`/model` - 打开模型选择菜单（推荐）
 `/set channel` - 设置专属频道
 `/chat` - 在当前频道启用对话
 `/reset` - 重置对话历史
 `/help` - 显示此帮助
 
-**可用模型:**
-- `gpt` - 🧠 智商最高，速度最快
-- `deepseek` - 🔍 推理强，数学好
-- `kimi` - 🇨🇳 中文最好
-- `qwen` - 🌏 阿里Qwen
+**可用模型（共6个）:**
+- **MiniMax M2.5** - 🏆 综合最强，代码第一
+- **GLM-5** - 🇨🇳 中文最强，工具调用
+- **DeepSeek V3** - 🔍 推理强，数学好
+- **Qwen 2.5** - 🌏 阿里Qwen，中文优秀
+- **GPT-OSS 120B** - ⚡ 速度快，备用
+- **Kimi K2** - 💬 中文好，备用
 
 **对话功能:**
 - `现在几点` - 获取时间
@@ -194,7 +273,7 @@ async def slash_help(interaction: discord.Interaction):
         description=help_text,
         color=0x3498db
     )
-    embed.set_footer(text="Gemini 智能助手 | 随时为你服务")
+    embed.set_footer(text="Gemini 智能助手 | 使用 /model 切换模型")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ========== 普通命令 ==========
@@ -216,7 +295,7 @@ async def hello(ctx):
         description=f"你好 {ctx.author.name}！有什么可以帮你的吗？",
         color=0x3498db
     )
-    embed.set_footer(text="直接发消息就能和我聊天")
+    embed.set_footer(text="使用 /model 切换模型")
     await ctx.send(embed=embed)
 
 @bot.command()
