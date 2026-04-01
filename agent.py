@@ -295,26 +295,28 @@ class Agent:
         is_asking_help = any(kw in user_input for kw in help_keywords) and len(user_input) < 30
         
         if is_asking_help:
-            knowledge = search_knowledge(user_input)
-            if knowledge:
-                return "📚 知识库：\n\n" + "\n---\n".join(knowledge)
-
-        # 查记忆
-        memories = search_memory(self.user_id, user_input)
-        context = "\n".join(memories[:2]) if memories else ""
-
-        try:
-            messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-            for msg in self.history:
-                messages.append({"role": msg["role"], "content": msg["parts"][0]})
-            if context:
-                messages.append({"role": "user", "content": f"相关记忆：{context}\n\n当前问题：{user_input}"})
-            else:
-                messages.append({"role": "user", "content": user_input})
-
-            response = await self._call_model(messages)
-            reply = response.choices[0].message
-
+            # 先查知识库，但不直接返回
+knowledge = search_knowledge(user_input)
+if knowledge:
+    # 将知识库内容作为上下文，让模型生成回答
+    knowledge_context = "\n\n".join(knowledge)
+    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+    for msg in self.history:
+        messages.append({"role": msg["role"], "content": msg["parts"][0]})
+    messages.append({"role": "user", "content": f"用户问：{user_input}\n知识库内容：\n{knowledge_context}\n请根据知识库内容，用自然、友好的方式回答用户。"})
+    try:
+        response = await self._call_model(messages)
+        reply = response.choices[0].message
+        # 如果返回中又调用了工具（通常不会），递归处理
+        if reply.tool_calls:
+            return await self._handle_tools(reply, user_input, channel)
+        final_reply = reply.content
+        self._update_history(user_input, final_reply)
+        return final_reply
+    except Exception as e:
+        logger.error(f"知识库润色失败: {e}")
+        # 降级：直接返回知识库内容
+        return "📚 知识库：\n\n" + "\n---\n".join(knowledge)
             if reply.tool_calls:
                 return await self._handle_tools(reply, user_input, channel)
 
