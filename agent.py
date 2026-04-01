@@ -419,7 +419,28 @@ async def _handle_tools(self, reply, user_input, channel):
         self._update_history(user_input, combined_result)
         return combined_result
 
-**当前模型：** 🧠 GPT-OSS 120B（智商最高）
+def _get_help_text(self):
+    return """
+**🤖 Gemini 智能助手**
+
+**当前模型**: 🧠 GPT-OSS 120B (智商最高)
+
+**斜杠命令**:
+`/model gpt/deepseek/kimi/qwen` - 切换模型
+`/reset` - 重置对话
+`/help` - 帮助
+
+**功能**:
+- 🕐 `现在几点` - 时间
+- 🔍 `搜索 关键词` - 联网搜索
+- 📄 `读取 bot.py` - 读文件
+- ✏️ `把命令前缀改成 $` - 改代码
+- ⏰ `10分钟后提醒我` - 提醒
+- 📅 `每天9点发消息` - 每日定时
+- 📋 `查看任务` - 任务列表
+
+直接聊天就行，我会自动理解你的需求!
+"""**当前模型：** 🧠 GPT-OSS 120B（智商最高）
 
 **斜杠命令：**
 `/model gpt/deepseek/kimi/qwen` - 切换模型
