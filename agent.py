@@ -440,7 +440,7 @@ def _get_help_text(self):
 - 📋 `查看任务` - 任务列表
 
 直接聊天就行，我会自动理解你的需求!
-"""**当前模型：** 🧠 GPT-OSS 120B（智商最高）
+"""**当前模型:** 🧠 GPT-OSS 120B (智商最高)
 
 **斜杠命令：**
 `/model gpt/deepseek/kimi/qwen` - 切换模型
