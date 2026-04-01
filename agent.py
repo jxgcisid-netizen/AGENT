@@ -72,7 +72,7 @@ if nvidia_client:
     }
 
 DEFAULT_MODEL = "gpt"  # 默认用智商最高的
-MAX_HISTORY = 50
+MAX_HISTORY = 12
 
 # ========== 工具函数 ==========
 def get_time():
