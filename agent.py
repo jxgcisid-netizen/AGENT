@@ -405,11 +405,9 @@ class Agent:
             "帮我", "整理", "总结", "分析", "对比", "生成报告",
             "写论文", "做研究", "调研", "收集", "汇总"
         ]
-        # 简单任务直接返回 False
         simple_tasks = ["你好", "现在几点", "搜索", "读取", "改代码", "提醒", "定时", "查看任务", "删除提醒"]
         if any(kw in user_input for kw in simple_tasks):
             return False
-        # 复杂任务判断
         if len(user_input) > 50:
             return True
         if any(kw in user_input for kw in complex_keywords):
@@ -418,7 +416,6 @@ class Agent:
 
     async def _multi_agent_run(self, user_input, channel=None):
         """多 Agent 并行处理复杂任务"""
-        # 1. 主管拆解任务
         supervisor_prompt = f"""
         用户需求：{user_input}
         请拆解成 2-4 个独立的子任务，返回 JSON 数组。
@@ -429,7 +426,6 @@ class Agent:
         try:
             response = await self._call_model([{"role": "user", "content": supervisor_prompt}])
             content = response.choices[0].message.content
-            # 提取 JSON
             import re
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if json_match:
@@ -443,7 +439,6 @@ class Agent:
         if not tasks or len(tasks) == 1:
             return await self._normal_run(user_input, channel)
 
-        # 2. 并行执行子任务
         async def execute_subtask(task):
             task_prompt = f"你是{task}专家。请执行：{task}\n用中文回复，简洁直接。"
             try:
@@ -455,7 +450,6 @@ class Agent:
         logger.info(f"多 Agent 执行 {len(tasks)} 个子任务: {tasks}")
         results = await asyncio.gather(*[execute_subtask(t) for t in tasks])
 
-        # 3. 汇总结果
         summary_prompt = f"用户原需求：{user_input}\n子任务结果：\n" + "\n---\n".join(results) + "\n请汇总成一份完整的回答，用中文。"
         try:
             summary_resp = await self._call_model([{"role": "user", "content": summary_prompt}])
@@ -469,7 +463,6 @@ class Agent:
 
     async def _normal_run(self, user_input, channel=None):
         """原有的单 Agent 处理流程"""
-        # 查记忆
         memories = search_memory(self.user_id, user_input)
         context = "\n".join(memories[:2]) if memories else ""
 
@@ -498,7 +491,7 @@ class Agent:
             logger.error(f"错误: {e}")
             return f"❌ 错误：{str(e)[:200]}"
 
-    async def run(self, user_input, channel=None):
+    async def run(self, user_input, channel=None, interaction=None):
         # 确认处理
         if self.waiting_for_confirmation:
             if user_input.lower() in ["yes", "是", "确认", "y"]:
