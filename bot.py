@@ -72,35 +72,19 @@ async def on_message(message):
             should_respond = True
     
     if should_respond and content:
+        # 先发送“正在思考...”提示
+        thinking_msg = await message.channel.send("🤔 正在思考...")
+        
         async with message.channel.typing():
             try:
                 agent = get_agent(user_id)
                 result = await agent.run(content, message.channel)
                 if result:
-                    if "✅" in result or "成功" in result:
-                        color = 0x00ff00
-                    elif "❌" in result or "错误" in result or "失败" in result:
-                        color = 0xff0000
-                    else:
-                        color = 0x3498db
-                    
-                    embed = discord.Embed(
-                        title="📢 回复",
-                        description=result[:2000],
-                        color=color
-                    )
-                    embed.set_author(name=message.author.display_name, icon_url=message.author.avatar.url if message.author.avatar else None)
-                    embed.set_footer(text=f"模型: {agent.current_model_key.upper()}")
-                    
-                    await message.channel.send(embed=embed)
+                    # 替换成完整回复
+                    await thinking_msg.edit(content=result)
             except Exception as e:
                 print(f"错误: {e}")
-                error_embed = discord.Embed(
-                    title="❌ 出错了",
-                    description=f"```\n{str(e)[:200]}\n```",
-                    color=0xff0000
-                )
-                await message.channel.send(embed=error_embed)
+                await thinking_msg.edit(content=f"❌ 出错了：{str(e)[:200]}")
 
 # ========== 斜杠命令 ==========
 
@@ -147,13 +131,11 @@ async def slash_model(interaction: discord.Interaction, model: app_commands.Choi
     agent = get_agent(user_id)
     result = agent.switch_model(model.value)
     
-    # 获取模型详情
     from agent import MODELS
     model_info = MODELS.get(model.value, {})
     provider = model_info.get("provider", "unknown")
     description = model_info.get("description", "")
     
-    # 根据平台显示不同提示
     if provider == "nvidia":
         platform_text = "✅ 无限 Token，完全免费"
     else:
