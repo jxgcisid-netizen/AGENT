@@ -9,3 +9,5 @@ pinecone
 numpy
 flask
 flask-cors
+fastapi
+uvicorn
