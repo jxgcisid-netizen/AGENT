@@ -19,7 +19,6 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     
-    # 对话历史表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS conversations (
             user_id TEXT PRIMARY KEY,
@@ -28,7 +27,6 @@ def init_db():
         )
     ''')
     
-    # 用户设置表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_settings (
             user_id TEXT PRIMARY KEY,
