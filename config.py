@@ -14,8 +14,8 @@ DB_PATH = os.path.join(DATA_DIR, "bot.db")
 TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
 
 # ========== 模型配置 ==========
-MAX_HISTORY = 12
-MAX_TOKENS = 1200
+MAX_HISTORY = 8           # 从 12 降到 8，减少内存和 token 消耗
+MAX_TOKENS = 800          # 从 1200 降到 800
 DEFAULT_TEMPERATURE = 0.3
 DEFAULT_MODEL_KEY = "minimax"
 
