@@ -397,7 +397,7 @@ class Agent:
         model_display = model_map.get(self.current_model_key, self.current_model_key.upper())
 
         return f"""
-**🤖 Gemini 智能助手**
+**🤖 Nexus 智能助手**
 
 **当前模型:** {model_display}
 
