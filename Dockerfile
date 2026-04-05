@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# 同时启动 Discord Bot 和 Web 控制面板
+# 同时启动 bot.py 和 web.py
 CMD ["sh", "-c", "python bot.py & python web.py"]
