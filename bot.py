@@ -4,9 +4,23 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 from agent import Agent
+from flask import Flask
+import threading
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+
+# 健康检查服务器
+health_app = Flask('')
+
+@health_app.route('/')
+def health():
+    return 'OK'
+
+def run_health():
+    health_app.run(host='0.0.0.0', port=8000)
+
+threading.Thread(target=run_health, daemon=True).start()
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all(), help_command=None)
 user_agents = {}
@@ -72,21 +86,16 @@ async def on_message(message):
             should_respond = True
     
     if should_respond and content:
-        # 先发送“正在思考...”提示
         thinking_msg = await message.channel.send("🤔 正在思考...")
-        
         async with message.channel.typing():
             try:
                 agent = get_agent(user_id)
                 result = await agent.run(content, message.channel)
                 if result:
-                    # 替换成完整回复
                     await thinking_msg.edit(content=result)
             except Exception as e:
                 print(f"错误: {e}")
                 await thinking_msg.edit(content=f"❌ 出错了：{str(e)[:200]}")
-
-# ========== 斜杠命令 ==========
 
 @bot.tree.command(name="chat", description="在当前位置开始对话")
 async def slash_chat(interaction: discord.Interaction):
@@ -114,9 +123,8 @@ async def slash_set(interaction: discord.Interaction, channel: discord.TextChann
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ========== 模型选择命令（带下拉菜单） ==========
 @bot.tree.command(name="model", description="切换AI模型")
-@app_commands.describe(model="选择要切换的模型")
+@app_commands.describe(model="gpt / kimi / deepseek / qwen")
 @app_commands.choices(model=[
     app_commands.Choice(name="🏆 MiniMax M2.5 (综合最强 | 代码第一 | 无限Token)", value="minimax"),
     app_commands.Choice(name="🇨🇳 GLM-5 (中文最强 | 工具调用95%+ | 无限Token)", value="glm"),
@@ -126,7 +134,6 @@ async def slash_set(interaction: discord.Interaction, channel: discord.TextChann
     app_commands.Choice(name="💬 Kimi K2 (中文优秀 | Groq备用)", value="kimi"),
 ])
 async def slash_model(interaction: discord.Interaction, model: app_commands.Choice[str]):
-    """选择AI模型（直接下拉菜单）"""
     user_id = str(interaction.user.id)
     agent = get_agent(user_id)
     result = agent.switch_model(model.value)
@@ -198,8 +205,6 @@ async def slash_help(interaction: discord.Interaction):
     )
     embed.set_footer(text="Gemini 智能助手 | 使用 /model 切换模型")
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ========== 普通命令 ==========
 
 @bot.command()
 async def ping(ctx):
