@@ -1,4 +1,5 @@
 import os
+import json
 import hashlib
 import numpy as np
 import pinecone
@@ -23,10 +24,8 @@ VECTOR_DIM = 384
 if PINECONE_API_KEY:
     pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
     
-    # 获取现有索引列表
     existing_indexes = [idx.name for idx in pc.list_indexes()]
     
-    # 创建记忆索引（如果不存在）
     if MEMORY_INDEX not in existing_indexes:
         print(f"创建索引: {MEMORY_INDEX}")
         pc.create_index(
@@ -38,7 +37,6 @@ if PINECONE_API_KEY:
         time.sleep(2)
     memory_index = pc.Index(MEMORY_INDEX)
     
-    # 创建知识库索引（如果不存在）
     if KNOWLEDGE_INDEX not in existing_indexes:
         print(f"创建索引: {KNOWLEDGE_INDEX}")
         pc.create_index(
@@ -56,10 +54,8 @@ else:
     knowledge_index = None
     print("⚠️ Pinecone 未配置")
 
-# ========== 辅助函数 ==========
 def get_embedding(text: str) -> list:
     """获取文本的 embedding（384 维，归一化）"""
-    # 简单伪 embedding
     hash_val = hashlib.md5(text.encode()).hexdigest()
     emb = []
     for i in range(VECTOR_DIM):
@@ -67,15 +63,12 @@ def get_embedding(text: str) -> list:
         val = int(hash_val[idx], 16) / 15.0
         emb.append(float(val))
     
-    # 归一化
     norm = np.linalg.norm(emb)
     if norm > 0:
         emb = [float(x / norm) for x in emb]
     return emb
 
-# ========== 记忆功能 ==========
 def save_memory(user_id: str, text: str, metadata: dict = None):
-    """保存记忆到 Pinecone"""
     if not memory_index:
         return
     try:
@@ -90,7 +83,6 @@ def save_memory(user_id: str, text: str, metadata: dict = None):
         print(f"保存记忆失败: {e}")
 
 def search_memory(user_id: str, query: str, top_k: int = 3) -> list:
-    """搜索相关记忆"""
     if not memory_index:
         return []
     try:
@@ -110,9 +102,7 @@ def search_memory(user_id: str, query: str, top_k: int = 3) -> list:
         print(f"搜索记忆失败: {e}")
         return []
 
-# ========== 知识库功能 ==========
 def add_knowledge(text: str, metadata: dict = None):
-    """添加文档到知识库"""
     if not knowledge_index:
         return
     try:
@@ -128,7 +118,6 @@ def add_knowledge(text: str, metadata: dict = None):
         print(f"添加知识失败: {e}")
 
 def search_knowledge(query: str, top_k: int = 3) -> list:
-    """查询知识库，返回最相关的内容"""
     if not knowledge_index:
         return []
     try:
@@ -148,7 +137,6 @@ def search_knowledge(query: str, top_k: int = 3) -> list:
         return []
 
 def init_knowledge():
-    """初始化知识库（添加预设文档）"""
     if not knowledge_index:
         return
     
@@ -171,15 +159,12 @@ def init_knowledge():
         add_knowledge(doc)
     print("✅ 知识库初始化完成")
 
-# ========== 定时任务存储（简单版）==========
+# 定时任务存储
 scheduled_tasks = {}
 one_time_tasks = {}
-
-# 持久化定时任务到文件
 TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
 
 def save_tasks():
-    """保存定时任务到文件"""
     try:
         with open(TASKS_FILE, "w") as f:
             json.dump({
@@ -190,7 +175,6 @@ def save_tasks():
         print(f"保存任务失败: {e}")
 
 def load_tasks():
-    """加载定时任务"""
     global scheduled_tasks, one_time_tasks
     try:
         if os.path.exists(TASKS_FILE):
@@ -201,5 +185,4 @@ def load_tasks():
     except Exception as e:
         print(f"加载任务失败: {e}")
 
-# 尝试加载已有任务
 load_tasks()
