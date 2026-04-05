@@ -10,7 +10,7 @@ from agent import Agent
 from db import load_history, save_history
 from config import AUTHORIZED_USERS
 
-app = FastAPI(title="Gemini Bot 控制面板", version="1.0.0")
+app = FastAPI(title="Nexus Bot 控制面板", version="1.0.0")
 
 # 获取第一个授权用户作为默认用户
 DEFAULT_USER_ID = AUTHORIZED_USERS[0] if AUTHORIZED_USERS else "admin"
@@ -180,7 +180,7 @@ async def root():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🤖 Gemini Bot 控制面板</h1>
+                <h1>🤖 Nexus Bot 控制面板</h1>
                 <p>智能 AI 助手 | 支持多模型切换 | 实时对话</p>
             </div>
             
