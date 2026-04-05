@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 同时启动 bot.py 和 web.py
-CMD ["sh", "-c", "python bot.py & python web.py"]
+CMD ["python", "bot.py"]
