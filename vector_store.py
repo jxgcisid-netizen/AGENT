@@ -5,13 +5,19 @@ import pinecone
 import requests
 import time
 
-# Pinecone 配置
+# ========== 路径配置 ==========
+if os.path.exists("/data") and os.access("/data", os.W_OK):
+    DATA_DIR = "/data"
+else:
+    DATA_DIR = os.getcwd()
+
+# ========== Pinecone 配置 ==========
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV", "us-east4-gcp")
 
 MEMORY_INDEX = "discord-memories"
 KNOWLEDGE_INDEX = "discord-knowledge"
-VECTOR_DIM = 384  # 用 384 维，够用且快
+VECTOR_DIM = 384
 
 # 初始化 Pinecone
 if PINECONE_API_KEY:
@@ -29,7 +35,7 @@ if PINECONE_API_KEY:
             metric="cosine",
             spec=pinecone.ServerlessSpec(cloud="aws", region="us-east-1")
         )
-        time.sleep(2)  # 等待索引创建完成
+        time.sleep(2)
     memory_index = pc.Index(MEMORY_INDEX)
     
     # 创建知识库索引（如果不存在）
@@ -50,13 +56,13 @@ else:
     knowledge_index = None
     print("⚠️ Pinecone 未配置")
 
+# ========== 辅助函数 ==========
 def get_embedding(text: str) -> list:
-    """获取文本的 embedding"""
-    # 简单伪 embedding（384 维，归一化）
+    """获取文本的 embedding（384 维，归一化）"""
+    # 简单伪 embedding
     hash_val = hashlib.md5(text.encode()).hexdigest()
     emb = []
     for i in range(VECTOR_DIM):
-        # 用哈希值生成伪向量
         idx = i % len(hash_val)
         val = int(hash_val[idx], 16) / 15.0
         emb.append(float(val))
@@ -69,6 +75,7 @@ def get_embedding(text: str) -> list:
 
 # ========== 记忆功能 ==========
 def save_memory(user_id: str, text: str, metadata: dict = None):
+    """保存记忆到 Pinecone"""
     if not memory_index:
         return
     try:
@@ -83,6 +90,7 @@ def save_memory(user_id: str, text: str, metadata: dict = None):
         print(f"保存记忆失败: {e}")
 
 def search_memory(user_id: str, query: str, top_k: int = 3) -> list:
+    """搜索相关记忆"""
     if not memory_index:
         return []
     try:
@@ -104,6 +112,7 @@ def search_memory(user_id: str, query: str, top_k: int = 3) -> list:
 
 # ========== 知识库功能 ==========
 def add_knowledge(text: str, metadata: dict = None):
+    """添加文档到知识库"""
     if not knowledge_index:
         return
     try:
@@ -119,6 +128,7 @@ def add_knowledge(text: str, metadata: dict = None):
         print(f"添加知识失败: {e}")
 
 def search_knowledge(query: str, top_k: int = 3) -> list:
+    """查询知识库，返回最相关的内容"""
     if not knowledge_index:
         return []
     try:
@@ -138,7 +148,7 @@ def search_knowledge(query: str, top_k: int = 3) -> list:
         return []
 
 def init_knowledge():
-    """初始化知识库"""
+    """初始化知识库（添加预设文档）"""
     if not knowledge_index:
         return
     
@@ -151,7 +161,7 @@ def init_knowledge():
         pass
     
     docs = [
-        "机器人名称：ROB Bot，功能包括查询时间、联网搜索、读取文件、修改代码、定时提醒",
+        "机器人名称：Gemini Bot，功能包括查询时间、联网搜索、读取文件、修改代码、定时提醒",
         "可用模型：gpt（智商最高、速度最快）、kimi（中文最好）、deepseek（推理强）、qwen（中文强）",
         "使用方法：私聊直接发消息，服务器里 @机器人 发消息，用 /model 切换模型",
         "斜杠命令：/model 切换模型，/reset 重置对话，/help 查看帮助",
@@ -160,3 +170,36 @@ def init_knowledge():
     for doc in docs:
         add_knowledge(doc)
     print("✅ 知识库初始化完成")
+
+# ========== 定时任务存储（简单版）==========
+scheduled_tasks = {}
+one_time_tasks = {}
+
+# 持久化定时任务到文件
+TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
+
+def save_tasks():
+    """保存定时任务到文件"""
+    try:
+        with open(TASKS_FILE, "w") as f:
+            json.dump({
+                "scheduled": scheduled_tasks,
+                "one_time": one_time_tasks
+            }, f)
+    except Exception as e:
+        print(f"保存任务失败: {e}")
+
+def load_tasks():
+    """加载定时任务"""
+    global scheduled_tasks, one_time_tasks
+    try:
+        if os.path.exists(TASKS_FILE):
+            with open(TASKS_FILE, "r") as f:
+                data = json.load(f)
+                scheduled_tasks = data.get("scheduled", {})
+                one_time_tasks = data.get("one_time", {})
+    except Exception as e:
+        print(f"加载任务失败: {e}")
+
+# 尝试加载已有任务
+load_tasks()
