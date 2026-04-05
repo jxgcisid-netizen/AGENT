@@ -79,7 +79,7 @@ def get_agent(user_id: str) -> Agent:
 
 def create_embed(title: str, content: str, color: int = 0x00ff00, footer: str = None):
     embed = discord.Embed(title=title, description=content, color=color)
-    embed.set_footer(text=footer or "🤖 Gemini 智能助手")
+    embed.set_footer(text=footer or "🤖 Nexus 智能助手")
     return embed
 
 @bot.event
@@ -224,7 +224,7 @@ async def slash_reset(interaction: discord.Interaction):
 @bot.tree.command(name="help", description="查看所有命令")
 async def slash_help(interaction: discord.Interaction):
     help_text = """
-**🤖 Gemini 智能助手**
+**🤖 Nexus 智能助手**
 
 **斜杠命令:**
 `/model` - 切换AI模型（下拉选择）
@@ -258,7 +258,7 @@ async def slash_help(interaction: discord.Interaction):
         description=help_text,
         color=0x3498db
     )
-    embed.set_footer(text="Gemini 智能助手 | 使用 /model 切换模型")
+    embed.set_footer(text="Nexus 智能助手 | 使用 /model 切换模型")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ========== 普通命令 ==========
