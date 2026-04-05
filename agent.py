@@ -13,11 +13,9 @@ from bs4 import BeautifulSoup
 from db import init_db, save_history, load_history, save_user_preference, load_user_preference
 from vector_store import save_memory, search_memory, search_knowledge, init_knowledge
 
-# ---------- 日志 ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- 初始化 ----------
 init_db()
 init_knowledge()
 
@@ -34,7 +32,6 @@ if NVIDIA_API_KEY:
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 logger.info("✅ Groq 已配置")
 
-# ---------- 模型定义 ----------
 MODELS = {
     "minimax": {
         "provider": "nvidia",
@@ -399,7 +396,6 @@ class Agent:
             raise
 
     async def _is_complex_task(self, user_input):
-        """判断是否为复杂任务（需要多 Agent 处理）"""
         complex_keywords = [
             "同时", "并且", "然后", "接着", "之后", "先", "再",
             "帮我", "整理", "总结", "分析", "对比", "生成报告",
@@ -415,7 +411,6 @@ class Agent:
         return False
 
     async def _multi_agent_run(self, user_input, channel=None):
-        """多 Agent 并行处理复杂任务"""
         supervisor_prompt = f"""
         用户需求：{user_input}
         请拆解成 2-4 个独立的子任务，返回 JSON 数组。
@@ -462,7 +457,6 @@ class Agent:
             return combined
 
     async def _normal_run(self, user_input, channel=None):
-        """原有的单 Agent 处理流程"""
         memories = search_memory(self.user_id, user_input)
         context = "\n".join(memories[:2]) if memories else ""
 
@@ -491,8 +485,7 @@ class Agent:
             logger.error(f"错误: {e}")
             return f"❌ 错误：{str(e)[:200]}"
 
-    async def run(self, user_input, channel=None, interaction=None):
-        # 确认处理
+    async def run(self, user_input, channel=None):
         if self.waiting_for_confirmation:
             if user_input.lower() in ["yes", "是", "确认", "y"]:
                 self.waiting_for_confirmation = False
@@ -506,13 +499,11 @@ class Agent:
             else:
                 return "回复 yes 确认，no 取消"
 
-        # 重置命令
         if user_input in ["/reset", "重置"]:
             self.history = []
             save_history(self.user_id, self.history)
             return "✅ 对话已重置"
 
-        # 模型切换命令
         if user_input.startswith("/model"):
             parts = user_input.split()
             if len(parts) == 2:
@@ -520,11 +511,9 @@ class Agent:
             keys = ", ".join(MODELS.keys())
             return f"用法: `/model <模型>`\n可用: {keys}\n当前: {self.current_model_key}"
 
-        # 帮助命令
         if user_input in ["/help", "帮助", "help"]:
             return self._get_help_text()
 
-        # 知识库查询
         help_phrases = ["你有什么功能", "你会做什么", "怎么用你", "你能做什么", "你有什么用", "功能列表"]
         is_asking_help = any(phrase in user_input for phrase in help_phrases)
 
@@ -545,7 +534,6 @@ class Agent:
                     logger.error(f"润色失败: {e}")
                     return "📚 知识库：\n\n" + "\n---\n".join(knowledge)
 
-        # 判断是否使用多 Agent
         if await self._is_complex_task(user_input):
             logger.info(f"检测到复杂任务，启用多 Agent 模式: {user_input}")
             return await self._multi_agent_run(user_input, channel)
@@ -557,7 +545,6 @@ class Agent:
         if not tool_calls:
             return "工具未返回结果"
 
-        # 检查补丁
         for tc in tool_calls:
             if tc.function.name == "apply_code_patch":
                 args = json.loads(tc.function.arguments)
@@ -565,7 +552,6 @@ class Agent:
                 self.waiting_for_confirmation = True
                 return f"📝 补丁预览：\n```diff\n{args.get('patch_text')}\n```\n是否应用？回复 yes"
 
-        # 并行执行
         async def execute_one(tc):
             func = tc.function.name
             args = json.loads(tc.function.arguments)
