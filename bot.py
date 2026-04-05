@@ -12,9 +12,8 @@ import time
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# ========== 性能优化：消息队列 + 限流 ==========
+# ========== 性能优化：限流器 ==========
 class RateLimiter:
-    """简单的限流器，防止用户过度使用"""
     def __init__(self, max_calls=5, time_window=10):
         self.max_calls = max_calls
         self.time_window = time_window
@@ -24,14 +23,13 @@ class RateLimiter:
         now = time.time()
         if user_id not in self.calls:
             self.calls[user_id] = []
-        # 清理过期记录
         self.calls[user_id] = [t for t in self.calls[user_id] if now - t < self.time_window]
         if len(self.calls[user_id]) >= self.max_calls:
             return False
         self.calls[user_id].append(now)
         return True
 
-rate_limiter = RateLimiter(max_calls=10, time_window=60)  # 每分钟最多10次
+rate_limiter = RateLimiter(max_calls=10, time_window=60)
 
 # ========== 健康检查服务器 ==========
 health_app = Flask('')
@@ -43,33 +41,18 @@ def health():
 def run_health():
     health_app.run(host='0.0.0.0', port=8000)
 
-# 启动健康检查线程
 threading.Thread(target=run_health, daemon=True).start()
 
 # ========== Discord Bot ==========
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all(), help_command=None)
+bot = commands.Bot(
+    command_prefix="!", 
+    intents=discord.Intents.all(), 
+    help_command=None,
+    heartbeat_timeout=60.0
+)
+
 user_agents = {}
 user_channels = {}
-
-# 消息队列（异步处理，避免阻塞）
-message_queue = asyncio.Queue()
-queue_worker_running = True
-
-async def message_worker():
-    """后台处理消息队列"""
-    while queue_worker_running:
-        try:
-            message, user_id, channel = await asyncio.wait_for(message_queue.get(), timeout=1)
-            agent = get_agent(user_id)
-            result = await agent.run(message, channel)
-            if result:
-                # 如果消息太长，分段发送
-                for chunk in [result[i:i+2000] for i in range(0, len(result), 2000)]:
-                    await channel.send(chunk)
-        except asyncio.TimeoutError:
-            continue
-        except Exception as e:
-            print(f"队列处理错误: {e}")
 
 def get_agent(user_id: str) -> Agent:
     if user_id not in user_agents:
@@ -89,9 +72,6 @@ async def on_ready():
     print(f"Bot ID: {bot.user.id}")
     print(f"已连接到 {len(bot.guilds)} 个服务器")
     
-    # 启动消息队列工作线程
-    asyncio.create_task(message_worker())
-    
     try:
         synced = await bot.tree.sync()
         print(f"✅ 已同步 {len(synced)} 个斜杠命令")
@@ -108,14 +88,12 @@ async def on_message(message):
     user_id = str(message.author.id)
     channel_id = str(message.channel.id)
     
-    # 限流检查
     if not rate_limiter.is_allowed(user_id):
         await message.channel.send("⚠️ 你太频繁了，请稍后再试。")
         return
     
     is_mentioned = bot.user in message.mentions
     
-    # 检查频道设置
     if user_id in user_channels:
         target_channel = user_channels[user_id]
         if channel_id != target_channel and not is_mentioned:
@@ -124,17 +102,14 @@ async def on_message(message):
     should_respond = False
     content = message.content
     
-    # 处理 @ 提及
     if is_mentioned:
         for mention in message.mentions:
             content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "").strip()
         should_respond = True
     
-    # 处理命令
     if message.content.startswith("!"):
         return
     
-    # 普通消息
     if not message.content.startswith("!") and not is_mentioned:
         if user_id in user_channels:
             if channel_id == user_channels[user_id]:
@@ -143,12 +118,14 @@ async def on_message(message):
             should_respond = True
     
     if should_respond and content:
-        # 发送思考提示
         thinking_msg = await message.channel.send("🤔 正在思考...")
-        # 加入队列处理
-        await message_queue.put((content, user_id, message.channel))
-        # 删除思考消息
-        await thinking_msg.delete()
+        try:
+            agent = get_agent(user_id)
+            result = await agent.run(content, message.channel)
+            if result:
+                await thinking_msg.edit(content=result)
+        except Exception as e:
+            await thinking_msg.edit(content=f"❌ 出错了：{str(e)[:200]}")
 
 # ========== 斜杠命令 ==========
 
@@ -260,8 +237,6 @@ async def slash_help(interaction: discord.Interaction):
     )
     embed.set_footer(text="Nexus 智能助手 | 使用 /model 切换模型")
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ========== 普通命令 ==========
 
 @bot.command()
 async def ping(ctx):
