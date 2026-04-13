@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 import os
+import asyncio
 
 from agent import Agent
 from db import load_history, save_history
@@ -17,6 +18,7 @@ class ChatRequest(BaseModel):
 
 class ModelRequest(BaseModel):
     model: str
+
 
 @app.get("/")
 async def root():
@@ -42,7 +44,6 @@ async def root():
                 min-height: 100vh;
             }
 
-            /* 自定义滚动条 */
             ::-webkit-scrollbar {
                 width: 5px;
                 height: 5px;
@@ -59,14 +60,12 @@ async def root():
                 background: #5a5a6a;
             }
 
-            /* 布局 */
             .app {
                 display: flex;
                 height: 100vh;
                 overflow: hidden;
             }
 
-            /* 侧边栏 */
             .sidebar {
                 width: 280px;
                 background: rgba(18, 18, 26, 0.95);
@@ -125,11 +124,6 @@ async def root():
                 background: rgba(99,102,241,0.15);
                 color: #818cf8;
             }
-            .nav-item i {
-                font-size: 20px;
-                width: 24px;
-            }
-
             .sidebar-footer {
                 margin-top: auto;
                 padding-top: 20px;
@@ -155,7 +149,6 @@ async def root():
                 50% { opacity: 0.5; }
             }
 
-            /* 主内容区 */
             .main {
                 flex: 1;
                 display: flex;
@@ -164,7 +157,6 @@ async def root():
                 background: #0d0d12;
             }
 
-            /* 头部 */
             .header {
                 padding: 20px 32px;
                 border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -182,14 +174,12 @@ async def root():
                 margin-top: 4px;
             }
 
-            /* 内容区域 */
             .content {
                 flex: 1;
                 overflow-y: auto;
                 padding: 24px 32px;
             }
 
-            /* 统计卡片 */
             .stats-grid {
                 display: grid;
                 grid-template-columns: repeat(3, 1fr);
@@ -221,7 +211,6 @@ async def root():
                 margin-top: 6px;
             }
 
-            /* 聊天卡片 */
             .chat-card {
                 background: rgba(255,255,255,0.02);
                 border: 1px solid rgba(255,255,255,0.05);
@@ -274,6 +263,20 @@ async def root():
                 border-bottom-left-radius: 4px;
             }
 
+            .cursor {
+                display: inline-block;
+                width: 2px;
+                height: 1.2em;
+                background-color: #818cf8;
+                animation: blink 1s infinite;
+                vertical-align: middle;
+                margin-left: 2px;
+            }
+            @keyframes blink {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0; }
+            }
+
             .input-area {
                 display: flex;
                 gap: 12px;
@@ -310,7 +313,6 @@ async def root():
                 box-shadow: 0 4px 12px rgba(99,102,241,0.4);
             }
 
-            /* 控制栏 */
             .controls {
                 display: flex;
                 gap: 12px;
@@ -351,7 +353,6 @@ async def root():
                 color: #f87171;
             }
 
-            /* 历史卡片 */
             .history-card {
                 background: rgba(255,255,255,0.02);
                 border: 1px solid rgba(255,255,255,0.05);
@@ -406,7 +407,6 @@ async def root():
     </head>
     <body>
         <div class="app">
-            <!-- 侧边栏 -->
             <div class="sidebar">
                 <div class="logo">
                     <div class="logo-icon">✨</div>
@@ -433,7 +433,6 @@ async def root():
                 </div>
             </div>
 
-            <!-- 主内容 -->
             <div class="main">
                 <div class="header">
                     <h1 id="current-model-display">Nexus · MiniMax</h1>
@@ -441,7 +440,6 @@ async def root():
                 </div>
 
                 <div class="content">
-                    <!-- 统计卡片 -->
                     <div class="stats-grid">
                         <div class="stat-card">
                             <div class="stat-value" id="status-value">●</div>
@@ -457,7 +455,6 @@ async def root():
                         </div>
                     </div>
 
-                    <!-- 聊天界面 -->
                     <div id="chat-tab">
                         <div class="chat-card">
                             <div class="chat-title">
@@ -487,7 +484,6 @@ async def root():
                         </div>
                     </div>
 
-                    <!-- 历史记录界面（默认隐藏）-->
                     <div id="history-tab" style="display: none;">
                         <div class="history-card">
                             <div class="chat-title">
@@ -530,7 +526,7 @@ async def root():
                     document.getElementById('status-text').textContent = isOnline ? '在线' : '离线';
                     document.getElementById('model-value').textContent = data.model.toUpperCase();
                     document.getElementById('history-count').textContent = data.history_length;
-                    document.getElementById('current-model-display').textContent = `Nexus · ${data.model.toUpperCase()}`;
+                    document.getElementById('current-model-display').textContent = 'Nexus · ' + data.model.toUpperCase();
                     document.getElementById('model-select').value = data.model;
                 } catch(e) { console.error(e); }
             }
@@ -559,37 +555,53 @@ async def root():
                 if (!message) return;
 
                 const messagesDiv = document.getElementById('chat-messages');
+                
+                // 显示用户消息
                 const userMsgDiv = document.createElement('div');
                 userMsgDiv.className = 'message user-message';
                 userMsgDiv.innerHTML = `<div class="message-content">${escapeHtml(message)}</div>`;
                 messagesDiv.appendChild(userMsgDiv);
                 input.value = '';
+                
+                // 创建机器人消息占位符
+                const botMsgDiv = document.createElement('div');
+                botMsgDiv.className = 'message bot-message';
+                botMsgDiv.innerHTML = `<div class="message-content"><span class="cursor">▊</span></div>`;
+                messagesDiv.appendChild(botMsgDiv);
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-                const loadingDiv = document.createElement('div');
-                loadingDiv.className = 'message bot-message';
-                loadingDiv.innerHTML = `<div class="message-content"><div class="spinner"></div></div>`;
-                messagesDiv.appendChild(loadingDiv);
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
+                
+                const contentDiv = botMsgDiv.querySelector('.message-content');
+                
                 try {
-                    const res = await fetch('/api/chat', {
+                    const response = await fetch('/api/chat/stream', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message: message })
                     });
-                    const data = await res.json();
-                    loadingDiv.remove();
-                    const botMsgDiv = document.createElement('div');
-                    botMsgDiv.className = 'message bot-message';
-                    botMsgDiv.innerHTML = `<div class="message-content">${escapeHtml(data.response)}</div>`;
-                    messagesDiv.appendChild(botMsgDiv);
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                    fetchStatus();
-                    if (currentTab === 'history') fetchHistory();
+                    
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let fullText = '';
+                    
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value);
+                        fullText += chunk;
+                        contentDiv.innerHTML = escapeHtml(fullText) + '<span class="cursor">▊</span>';
+                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
+                    
+                    // 移除光标
+                    contentDiv.innerHTML = escapeHtml(fullText);
+                    
                 } catch(e) {
-                    loadingDiv.innerHTML = `<div class="message-content" style="background:rgba(220,38,38,0.3);">❌ 发送失败</div>`;
+                    contentDiv.innerHTML = '❌ 发送失败';
                 }
+                
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                fetchStatus();
+                if (currentTab === 'history') fetchHistory();
             }
 
             async function switchModel() {
@@ -637,6 +649,7 @@ async def root():
     """
     return HTMLResponse(content=html_content)
 
+
 @app.get("/api/status")
 async def get_status():
     return {
@@ -645,24 +658,44 @@ async def get_status():
         "history_length": len(agent.history)
     }
 
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """流式响应接口"""
+    async def generate():
+        try:
+            result = await agent.run(req.message, None)
+            for char in result:
+                yield char
+                await asyncio.sleep(0.01)  # 10ms 一个字
+        except Exception as e:
+            yield f"错误：{str(e)}"
+    
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    """非流式响应接口（备用）"""
     try:
         result = await agent.run(req.message, None)
         return {"response": result}
     except Exception as e:
         return {"response": f"错误：{str(e)}"}
 
+
 @app.post("/api/model")
 async def switch_model(req: ModelRequest):
     result = agent.switch_model(req.model)
     return {"result": result}
+
 
 @app.post("/api/reset")
 async def reset_history():
     agent.history = []
     save_history(DEFAULT_USER_ID, [])
     return {"result": "✅ 对话已重置"}
+
 
 @app.get("/api/history")
 async def get_history():
@@ -673,6 +706,7 @@ async def get_history():
             "content": msg["parts"][0][:500]
         })
     return {"history": history}
+
 
 if __name__ == "__main__":
     import uvicorn
