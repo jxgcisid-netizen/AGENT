@@ -150,6 +150,7 @@ class Agent:
             raise
 
     async def _is_complex_task(self, user_input):
+        return False
         if any(kw in user_input for kw in ["你好", "现在几点", "搜索", "读取", "改代码", "提醒"]):
             return False
         if len(user_input) > 50:
